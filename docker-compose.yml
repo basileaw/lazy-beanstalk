@@ -1,0 +1,15 @@
+services:
+  terminal:
+    image: quote-game
+    ports:
+      - "7681:7681"
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  web:
+    image: quote-game
+    ports:
+      - "5000:5000"
+    command: python server.py
+    depends_on:
+      - terminal
