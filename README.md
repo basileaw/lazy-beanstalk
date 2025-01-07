@@ -35,10 +35,10 @@ This template turns your terminal application into a web-accessible service. Use
    - Handles WebSocket connections
    - Manages terminal sessions
 
-4. **Deployment (Elastic Beanstalk)**
-   - Runs on AWS infrastructure
+4. **Deployment (AWS Lightsail)**
+   - Runs on AWS Lightsail infrastructure
    - Provides a public URL
-   - Handles scaling and availability
+   - Simple and cost-effective hosting
 
 ## Example Use Case
 
@@ -55,8 +55,8 @@ def game_loop():
 
 Without modifying your code, this template:
 1. Packages it into a container
-2. Deploys it to AWS
-3. Gives you a URL like: `http://your-app.elasticbeanstalk.com`
+2. Deploys it to AWS Lightsail
+3. Gives you a public URL
 4. Users see and interact with your terminal app in their browser
 
 ## Local Development
@@ -79,25 +79,26 @@ Visit `http://localhost:5000` to see your app running locally.
 When you're ready to share:
 
 ```bash
-eb deploy
+# Deploy container to Lightsail
+aws lightsail push-container-image --service-name your-service-name --label your-container --image your-image
+
+# Deploy the container service
+aws lightsail create-container-service-deployment --service-name your-service-name --containers ...
 ```
 
 This:
 1. Packages your application
-2. Deploys to AWS Elastic Beanstalk
+2. Deploys to AWS Lightsail
 3. Provides a public URL
-4. Sets up HTTPS
-5. Handles scaling
+4. Sets up HTTPS automatically
 
 ## Project Structure Explained
 
 - `client.py` - Your original terminal application
 - `server.py` - Web interface (you don't need to modify this)
 - `start.sh` - Runs both services (terminal + web)
-- `.ebextensions/` - AWS configuration
-  - `01_nginx.config` - WebSocket proxy settings
-  - `01_ports.config` - Load balancer configuration
-  - `02_security.config` - Security settings
+- `Dockerfile` - Container configuration
+- `docker-compose.yml` - Local development setup
 
 ## When to Use This
 
@@ -123,7 +124,7 @@ Not ideal for:
 
 - Uses Docker for containerization
 - Nginx handles WebSocket proxying
-- AWS Elastic Beanstalk for deployment
+- AWS Lightsail for simple container deployment
 - Poetry for Python dependency management
 
 ## Security Note
@@ -132,9 +133,10 @@ This template prioritizes ease of sharing over security. For internal or demonst
 
 ## Cost Considerations
 
-- Runs on AWS Elastic Beanstalk t2.micro instances
-- Suitable for testing and small-scale sharing
-- Free tier eligible
+- Runs on AWS Lightsail's container service
+- Predictable, fixed monthly pricing
+- Starts at $7/month for smallest instance
+- Includes data transfer
 
 ## Support and Contributions
 
