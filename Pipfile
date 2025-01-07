@@ -1,0 +1,20 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[scripts]
+serve = "python server.py"
+serve-container = "bash -c 'docker build -t quote-game . && docker run -p 5000:5000 -p 7681:7681 quote-game'"
+
+[packages]
+flask = ">=3.1.0"
+rich = ">=13.9.4"
+bs4 = ">=0.0.2"
+requests = ">=2.32.3"
+
+[requires]
+python_version = "3.12"
+
+[dev-packages]
+

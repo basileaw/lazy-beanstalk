@@ -1,6 +1,7 @@
 .venv
 .DS_Store
 .vscode
+.archive/
 
 # Elastic Beanstalk Files
 .elasticbeanstalk/*
