@@ -20,7 +20,7 @@ def start_ttyd():
     """Start the ttyd process"""
     global ttyd_process
     ttyd_process = subprocess.Popen(
-        ['ttyd', '--writable', '-p', '7681', 'python', 'client.py'],
+        ['ttyd', '--writable', '-p', '7681', 'python', 'application/main.py'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )

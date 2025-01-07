@@ -6,4 +6,4 @@ services:
       - "7681:7681"
     environment:
       - PYTHONUNBUFFERED=1
-    command: python server.py
+    command: python wrapper/server.py

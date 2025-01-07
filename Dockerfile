@@ -35,4 +35,4 @@ EXPOSE 7681
 EXPOSE 5000
 
 # Start the server
-CMD ["python", "server.py"]
+CMD ["python", "wrapper/server.py"]
