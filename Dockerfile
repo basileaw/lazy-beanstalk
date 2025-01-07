@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Install ttyd and other required system dependencies
+# Install ttyd and system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     build-essential \
@@ -18,21 +18,16 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install pipenv
+# Install Python dependencies
 RUN pip install pipenv
-
-# Copy Pipfile and Pipfile.lock first for better caching
-COPY Pipfile* /app/
-
-# Install dependencies
+COPY Pipfile* ./
 RUN pipenv install --deploy --system
 
-# Copy the rest of the application
-COPY . /app/
+# Copy application code
+COPY . .
 
-# Expose necessary ports
-EXPOSE 7681
-EXPOSE 5000
+# Expose ports
+EXPOSE 7681 5000
 
 # Start the server
 CMD ["python", "wrapper/server.py"]

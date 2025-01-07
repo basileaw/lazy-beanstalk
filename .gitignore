@@ -3,7 +3,11 @@
 .vscode
 .archive/
 
-# Elastic Beanstalk Files
-.elasticbeanstalk/*
-!.elasticbeanstalk/*.cfg.yml
-!.elasticbeanstalk/*.global.yml
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# OS specific
+.DS_Store

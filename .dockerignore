@@ -1,2 +1,13 @@
-.venv
-app.py
+# Version control
+.git
+.gitignore
+**/.git*
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Other
+
+deployment/
