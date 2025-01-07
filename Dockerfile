@@ -20,8 +20,13 @@ WORKDIR /app
 
 # Install Python dependencies
 RUN pip install pipenv
-COPY Pipfile* ./
-RUN pipenv install --deploy --system
+
+# Copy only Pipfile and Pipfile.lock first
+COPY Pipfile Pipfile.lock ./
+
+# Install dependencies without virtualenv (--system)
+# Remove --deploy flag for now or ensure lock file is up to date
+RUN pipenv install --system
 
 # Copy application code
 COPY . .

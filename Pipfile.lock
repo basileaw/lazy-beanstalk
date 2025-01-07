@@ -1,11 +1,14 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "5a8170cf8f90b45e2b30008c51a268d706c021fa810e291ef41a9801ec58206f"
+            "sha256": "67222e8fcf2ce28e89e6a6eebdb7df0df82122901681f823e7ea18172721aeb8"
         },
         "pipfile-spec": 6,
         "requires": {
-            "python_version": "3.12"
+            "python_version": "3.12",
+            "system_packages": [
+                "ttyd"
+            ]
         },
         "sources": [
             {
