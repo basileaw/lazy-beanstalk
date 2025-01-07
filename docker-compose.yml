@@ -2,7 +2,7 @@ services:
   web:
     build: .
     ports:
-      - "5000:5000"
+      - "80:5000"
       - "7681:7681"
     environment:
       - PYTHONUNBUFFERED=1

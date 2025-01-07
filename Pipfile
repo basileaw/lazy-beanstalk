@@ -15,6 +15,10 @@ fastapi = "*"
 uvicorn = "*"
 
 [requires]
+# System requirements:
+# - Docker
+# - AWS CLI
+# - AWS Lightsail Control Plugin (lightsailctl)
 python_version = "3.12"
 system_packages = ["ttyd"]
 
