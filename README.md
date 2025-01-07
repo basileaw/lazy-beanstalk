@@ -26,7 +26,7 @@ This template turns your terminal application into a web-accessible service. Use
    - Remains completely unchanged - we don't modify your code
 
 2. **Web Interface (`server.py`)**
-   - A simple Flask server that creates a web gateway
+   - A simple Fast API server that creates a web gateway
    - Embeds your terminal in a browser window
    - Handles all the web-terminal communication
 

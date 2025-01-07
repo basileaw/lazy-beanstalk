@@ -1,11 +1,12 @@
-from flask import Flask, render_template_string, request
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 import subprocess
 import signal
 import sys
 import os
+import uvicorn
 
-app = Flask(__name__)
-
+app = FastAPI()
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head><title>Quote Guessing Game</title></head>
@@ -24,33 +25,33 @@ def start_ttyd():
         stderr=subprocess.PIPE
     )
 
-def cleanup(signum, frame):
+def cleanup(signum=None, frame=None):
     """Cleanup function to terminate ttyd process on shutdown"""
     if ttyd_process:
         ttyd_process.terminate()
         ttyd_process.wait()
     sys.exit(0)
 
-@app.route('/')
-def index():
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
     try:
-        host = request.headers.get('Host', '').split(':')[0]
-        app.logger.info(f'Using host: {host}')
+        host = request.headers.get('host', '').split(':')[0]
+        print(f'Using host: {host}')  # FastAPI equivalent of app.logger.info
         return HTML_TEMPLATE.format(host=host)
     except Exception as e:
-        app.logger.error(f'Error: {str(e)}')
-        return str(e), 500
+        print(f'Error: {str(e)}')  # FastAPI equivalent of app.logger.error
+        return str(e)
 
 if __name__ == '__main__':
     # Register signal handlers for cleanup
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
-    
+
     # Start ttyd process
     start_ttyd()
-    
+
     try:
-        app.run(host='0.0.0.0', port=5000)
+        uvicorn.run(app, host="0.0.0.0", port=5000)
     finally:
-        # Ensure cleanup happens even if Flask crashes
-        cleanup(None, None)
+        # Ensure cleanup happens even if FastAPI crashes
+        cleanup()
