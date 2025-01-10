@@ -9,8 +9,6 @@ from rich.panel import Panel
 from rich.padding import Padding
 from rich.console import Console, Group
 
-
-
 class Padded_Console(Console):
     def print(self, *args, padding=(1, 0, 1, 0), **kwargs):
         """
@@ -30,44 +28,34 @@ console = Padded_Console(log_time=None)
 base_url = "http://quotes.toscrape.com"
 url = base_url
 all_quotes = []
-
-try:
-    with open("quotes.json", "r") as f:
-        console.print("Loading quotes from file...", style="italic dim")
-        all_quotes = json.load(f)
-except:     
-    console.print("Scraping quotes from web...", style="italic dim") 
-    while url:
-        # Get the current page
-        quotes = requests.get(url)
-        quotes_soup = bs4.BeautifulSoup(quotes.text, "html.parser")
-        quotes_list = quotes_soup.select(".quote")
+    
+console.print("Scraping quotes from web...", style="italic dim") 
+while url:
+    # Get the current page
+    quotes = requests.get(url)
+    quotes_soup = bs4.BeautifulSoup(quotes.text, "html.parser")
+    quotes_list = quotes_soup.select(".quote")
+    
+    # Process quotes from current page
+    for quote in quotes_list:
+        text = quote.select(".text")[0].get_text()
+        author = quote.select(".author")[0].get_text() 
+        author_link = quote.select("a")[0]["href"]  # Select first anchor tag in quote
         
-        # Process quotes from current page
-        for quote in quotes_list:
-            text = quote.select(".text")[0].get_text()
-            author = quote.select(".author")[0].get_text() 
-            author_link = quote.select("a")[0]["href"]  # Select first anchor tag in quote
-            
-            quote_dict = {
-                "text": text,
-                "author": author,
-                "href": base_url + author_link
-            }
-            all_quotes.append(quote_dict)
-        
-        # Look for next page button
-        next_btn = quotes_soup.select(".next a")
-        if next_btn:
-            next_page = next_btn[0]["href"]
-            url = base_url + next_page
-        else:
-            url = None
-            
-    # save all_quotes to a file
-    with open("quotes.json", "w") as f:
-        import json
-        json.dump(all_quotes, f)
+        quote_dict = {
+            "text": text,
+            "author": author,
+            "href": base_url + author_link
+        }
+        all_quotes.append(quote_dict)
+    
+    # Look for next page button
+    next_btn = quotes_soup.select(".next a")
+    if next_btn:
+        next_page = next_btn[0]["href"]
+        url = base_url + next_page
+    else:
+        url = None
 
 playing = True
 round = 0
