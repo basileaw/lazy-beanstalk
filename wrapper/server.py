@@ -5,6 +5,10 @@ import signal
 import sys
 import os
 import uvicorn
+import logging
+
+# Get the uvicorn logger
+logger = logging.getLogger("uvicorn")
 
 app = FastAPI()
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -32,26 +36,42 @@ def cleanup(signum=None, frame=None):
         ttyd_process.wait()
     sys.exit(0)
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     try:
         host = request.headers.get('host', '').split(':')[0]
-        print(f'Using host: {host}')  # FastAPI equivalent of app.logger.info
+        logger.info(f'Using host: {host}')
         return HTML_TEMPLATE.format(host=host)
     except Exception as e:
-        print(f'Error: {str(e)}')  # FastAPI equivalent of app.logger.error
+        logger.error(f'Error in index route: {str(e)}')
         return str(e)
 
 if __name__ == '__main__':
-    # Register signal handlers for cleanup
+    # Register signal handlers for cleanup and start ttyd process
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
-
-    # Start ttyd process
     start_ttyd()
 
+    # Check for the environment variable to decide if watchfiles should be enabled
+    is_container = os.getenv('IS_CONTAINER', 'false').lower() == 'true'
+
     try:
-        uvicorn.run(app, host="0.0.0.0", port=5000)
+        uvicorn_args = {
+            "app": "server:app",
+            "host": "0.0.0.0",
+            "port": 5000
+        }
+
+        if not is_container:
+            # Enable watchfiles in local development
+            uvicorn_args["reload"] = True
+            uvicorn_args["reload_dirs"] = ["./"]
+
+        uvicorn.run(**uvicorn_args)
     finally:
         # Ensure cleanup happens even if FastAPI crashes
         cleanup()

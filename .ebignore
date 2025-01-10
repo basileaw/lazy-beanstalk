@@ -1,7 +1,13 @@
-.git
-.gitignore
-.env
-__pycache__
-*.pyc
-deployment/*
-ebsuccess.md
+# Ignore everything: 
+*
+
+# But include:
+!.ebextensions
+!.ebignore
+!.dockerignore
+!application/
+!wrapper/
+!.dockerignore
+!Dockerfile
+!Pipfile
+!Pipfile.lock

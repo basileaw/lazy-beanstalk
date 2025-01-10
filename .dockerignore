@@ -1,13 +1,17 @@
-# Version control
-.git
-.gitignore
-**/.git*
+# Ignore everything: 
+*
 
-# Docker files
-Dockerfile
-.dockerignore
-docker-compose.yml
+# But include...
 
-# Other
+## Docker
+!.dockerignore
+!docker-compose-yml
+!Dockerfile
 
-deployment/
+## Pipenv 
+!Pipfile
+!Pipfile.lock
+
+## Application Code 
+!application/
+!wrapper/

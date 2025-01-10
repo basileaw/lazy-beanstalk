@@ -4,8 +4,8 @@ verify_ssl = true
 name = "pypi"
 
 [scripts]
-serve = "python server.py"
-serve-container = "bash -c 'docker build -t quote-game . && docker run -p 5000:5000 -p 7681:7681 quote-game'"
+serve = "python wrapper/server.py"
+serve-container = "docker compose up --build --force-recreate"
 
 [packages]
 rich = ">=13.9.4"
@@ -15,10 +15,6 @@ fastapi = "*"
 uvicorn = "*"
 
 [requires]
-# System requirements:
-# - Docker
-# - AWS CLI
-# - AWS Lightsail Control Plugin (lightsailctl)
 python_version = "3.12"
 system_packages = ["ttyd"]
 
