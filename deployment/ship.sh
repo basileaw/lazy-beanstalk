@@ -51,22 +51,22 @@ if [ "$SG_ID" == "None" ] || [ -z "$SG_ID" ]; then
     error "No security group found for instance"
 fi
 
-echo "4. Adding/updating security group rule for ttyd..."
-aws ec2 describe-security-groups \
-    --group-ids ${SG_ID} \
-    --query 'SecurityGroups[0].IpPermissions[?FromPort==`7681`]' \
-    --output text | grep -q . && \
-    aws ec2 revoke-security-group-ingress \
-        --group-id ${SG_ID} \
-    --protocol tcp \
-    --port 7681 \
-        --cidr 0.0.0.0/0 \
-        || true
-    aws ec2 authorize-security-group-ingress \
-        --group-id ${SG_ID} \
-        --protocol tcp \
-        --port 7681 \
-        --cidr 0.0.0.0/0 \
-    || error "Failed to configure security group rule"
+# echo "4. Adding/updating security group rule for ttyd..."
+# aws ec2 describe-security-groups \
+#     --group-ids ${SG_ID} \
+#     --query 'SecurityGroups[0].IpPermissions[?FromPort==`7681`]' \
+#     --output text | grep -q . && \
+#     aws ec2 revoke-security-group-ingress \
+#         --group-id ${SG_ID} \
+#     --protocol tcp \
+#     --port 7681 \
+#         --cidr 0.0.0.0/0 \
+#         || true
+#     aws ec2 authorize-security-group-ingress \
+#         --group-id ${SG_ID} \
+#         --protocol tcp \
+#         --port 7681 \
+#         --cidr 0.0.0.0/0 \
+#     || error "Failed to configure security group rule"
 
 echo "Deployment complete!"
