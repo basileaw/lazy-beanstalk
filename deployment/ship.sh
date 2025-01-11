@@ -28,8 +28,8 @@ else
     echo "Creating new environment..."
     eb create simple-ship-env \
         --elb-type application \
-        --instance-type t3.micro || error "Failed to create environment"
-        # --verbose 
+        --instance-type t3.micro \
+        --service-role simple-ship-service-role || error "Failed to create environment"
 fi
 
 echo "3. Configuring security group..."
