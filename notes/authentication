@@ -1,0 +1,110 @@
+I'm a developer who needs to create a repeatable process for deploying my FastAPI application to AWS for rapid prototyping. The goal is to create a standardized, scriptable process that any developer could use to quickly spin up a prototype API with proper security controls, then tear it down when done. The solution needs to be as simple as possible while still maintaining security best practices. 
+
+I have a working deployment script (setup.sh) but need to add optional security and authentication that won't interfere with local development.
+
+Critical Requirements:
+
+Local Development:
+- Application should run without any authentication
+- No security-related code in the FastAPI application itself
+- Development environment should remain completely unchanged
+
+Cloud Deployment:
+- Must be deployable via scripts (AWS CLI/EB CLI)
+- No manual AWS Console configuration
+- EC2 instances must be in a VPC
+- Need authentication via company SSO (using OIDC)
+- Must be easily teardown-able
+- Must support both secured and unsecured deployments
+- Must work with default Elastic Beanstalk domain (no custom domain)
+
+Authentication:
+- Don't want to handle auth in the application code
+- Need to restrict access to only company employees
+- Want auth handled at the infrastructure level (ALB)
+- OIDC configuration will be stored in auth-config.yaml
+- Configuration includes issuer, endpoints, session details, and client credentials
+- Authentication should be optional and configurable post-deployment
+
+Infrastructure:
+- Need minimal but proper VPC setup
+- Must use private subnets for EC2 instances
+- Need Application Load Balancer in public subnets
+- Must support the existing ALB created by setup.sh
+- Must be able to retrieve and configure ALB programmatically
+- Infrastructure changes must be idempotent
+
+Limitations/Constraints:
+- No registered domain name available
+- No custom SSL certificates required (use default EB domain)
+- Limited knowledge of authentication implementations
+- Need to keep everything as minimal as possible while still being secure
+- Cannot modify existing setup.sh script
+- Must work with dynamic resource ARNs (new for each deployment)
+
+Solution Structure:
+/project
+├── setup.sh (existing deployment script)
+├── secure.sh (new security configuration script)
+└── auth-config.yaml (OIDC configuration)
+
+Workflow:
+1. Developer runs setup.sh to create basic deployment
+2. If security is needed, developer runs secure.sh
+3. Both scripts must be completely automated
+4. Teardown process must remove all created resources
+
+Here is the setup.sh script that is currently working:
+
+```
+#!/bin/bash
+set -e # Exit on error
+export PYTHONWARNINGS="ignore"
+
+echo "1. Checking environment status..."
+ENV_STATUS=$(aws elasticbeanstalk describe-environments \
+    --environment-names simple-ship-env \
+    --query 'Environments[0].Status' \
+    --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+if [ "$ENV_STATUS" != "DOES_NOT_EXIST" ] && [ "$ENV_STATUS" != "Terminated" ]; then
+    echo "Terminating environment..."
+    aws elasticbeanstalk terminate-environment --environment-name simple-ship-env
+    echo "Waiting for environment termination..."
+    while aws elasticbeanstalk describe-environments --environment-names simple-ship-env --query 'Environments[0].Status' --output text 2>/dev/null | grep -q -E 'Terminating|Ready'; do
+        echo -n "."
+        sleep 10
+    done
+    echo "Cleaning up previous configuration..."
+    rm -rf .elasticbeanstalk/
+    echo " Done!"
+fi
+
+echo "2. Initializing Elastic Beanstalk application..."
+eb init \
+    --platform docker \
+    --region us-west-2 \
+    simple-ship
+
+echo "3. Creating new environment..."
+eb create simple-ship-env \
+    --elb-type application \
+    --single \
+    --verbose
+
+echo "4. Configuring security group..."
+INSTANCE_ID=$(aws elasticbeanstalk describe-environment-resources --environment-name simple-ship-env --query 'EnvironmentResources.Instances[0].Id' --output text)
+SG_ID=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text)
+aws ec2 authorize-security-group-ingress \
+    --group-id $SG_ID \
+    --protocol tcp \
+    --port 7681 \
+    --cidr 0.0.0.0/0
+
+echo "5. Deploying application..."
+eb deploy --verbose
+
+echo "Setup complete!"
+```
+
+Please create a step by step plan for writing secure.sh to satisfy these requirements. 

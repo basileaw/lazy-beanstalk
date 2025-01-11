@@ -25,7 +25,7 @@ RUN pipenv install --system
 
 COPY . .
 
-EXPOSE 7681 5000
+EXPOSE 7681
 
 ENV IS_CONTAINER=true
 
