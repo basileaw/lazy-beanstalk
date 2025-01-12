@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Quote Guessing Game</title>
+    <script>
+        document.documentElement.style.setProperty('--bg-color', '{{background_color}}');
+    </script>
+    <style>
+        body {
+            margin: 0;
+            padding: 2rem;
+            background: var(--bg-color);
+            max-width: 60vw;
+            max-height: 90vh;
+            margin: 0 auto;
+        }
+
+        #terminal {
+            width: 100%;
+            height: 90vh;
+            border: none;
+        }
+
+        @media (max-width: 1024px) {
+            body {
+                max-width: 90%;
+                padding: 1rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            body {
+                max-width: 100%;
+                padding: 0.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <iframe id="terminal" src="http://{{host}}:7681/"></iframe>
+</body>
+
+</html>

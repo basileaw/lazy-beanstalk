@@ -1,40 +1,66 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-import subprocess
-import signal
-import sys
 import os
+import sys
+import json
+import signal
 import uvicorn
 import logging
+import subprocess
+from pathlib import Path
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
-# Get the uvicorn logger
 logger = logging.getLogger("uvicorn")
-
-app = FastAPI()
-HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head><title>Quote Guessing Game</title></head>
-<body><iframe id="terminal" src="http://{host}:7681/" style="width:100%;height:100vh;border:none"></iframe></body>
-</html>"""
 
 # Store the ttyd process globally
 ttyd_process = None
 
+# At the top with other imports and constants
+TERMINAL_THEME = {
+    "background": "black"  # Single source of truth for the color
+}
+
 def start_ttyd():
     """Start the ttyd process"""
     global ttyd_process
+    if ttyd_process:  # Kill existing process if it exists
+        ttyd_process.terminate()
+        ttyd_process.wait()
     ttyd_process = subprocess.Popen(
-        ['ttyd', '--writable', '-p', '7681', 'python', 'application/main.py'],
+        ['ttyd',
+         '--writable',
+         '-p', '7681',
+         '-t', f'theme={json.dumps(TERMINAL_THEME)}',  # Use the config
+         'python',
+         'application/main.py'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
 
 def cleanup(signum=None, frame=None):
     """Cleanup function to terminate ttyd process on shutdown"""
+    global ttyd_process
     if ttyd_process:
+        logger.info("Cleaning up ttyd process...")
         ttyd_process.terminate()
         ttyd_process.wait()
-    sys.exit(0)
+        ttyd_process = None
+    sys.exit(0) if signum else None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    start_ttyd()
+    yield
+    # Shutdown
+    cleanup()
+
+app = FastAPI(lifespan=lifespan)
+SERVER_ROOT = Path(__file__).parent
+templates = Jinja2Templates(directory=str(SERVER_ROOT / "static"))
+app.mount("/static", StaticFiles(directory=str(SERVER_ROOT / "static")), name="static")
 
 @app.get("/health")
 def health_check():
@@ -45,16 +71,22 @@ async def index(request: Request):
     try:
         host = request.headers.get('host', '').split(':')[0]
         logger.info(f'Using host: {host}')
-        return HTML_TEMPLATE.format(host=host)
+        return templates.TemplateResponse(
+            "index.html", 
+            {
+                "request": request, 
+                "host": host,
+                "background_color": TERMINAL_THEME["background"]
+            }
+        )
     except Exception as e:
         logger.error(f'Error in index route: {str(e)}')
         return str(e)
 
 if __name__ == '__main__':
-    # Register signal handlers for cleanup and start ttyd process
+    # Register signal handlers for cleanup
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
-    start_ttyd()
 
     # Check for the environment variable to decide if watchfiles should be enabled
     is_container = os.getenv('IS_CONTAINER', 'false').lower() == 'true'
