@@ -8,11 +8,12 @@ serve = "python wrapper/server.py"
 serve-container = "docker compose up --build --force-recreate"
 
 [packages]
-rich = ">=13.9.4"
 bs4 = ">=0.0.2"
 requests = ">=2.32.3"
 fastapi = "*"
 uvicorn = "*"
+jinja2 = "*"
+rich = "*"
 
 [requires]
 python_version = "3.12"
