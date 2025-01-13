@@ -8,19 +8,71 @@ check_env_exists() {
     return $?
 }
 
+# Function to check if role exists
+check_role_exists() {
+    aws iam get-role --role-name lazy-beanstalk-eb-role &>/dev/null
+    return $?
+}
+
 # Function for clean error output
 error() {
     echo "ERROR: $1" >&2
     exit 1
 }
 
-echo "1. Initializing Elastic Beanstalk application..."
+echo "1. Creating IAM role if it doesn't exist..."
+if ! check_role_exists; then
+    # Create trust policy JSON file
+    cat > trust-policy.json << EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "elasticbeanstalk.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole",
+            "Condition": {
+                "StringEquals": {
+                    "sts:ExternalId": "elasticbeanstalk"
+                }
+            }
+        }
+    ]
+}
+EOF
+
+    # Create the role
+    aws iam create-role \
+        --role-name lazy-beanstalk-eb-role \
+        --assume-role-policy-document file://trust-policy.json || error "Failed to create IAM role"
+
+    # Attach necessary policies
+    aws iam attach-role-policy \
+        --role-name lazy-beanstalk-eb-role \
+        --policy-arn arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService || error "Failed to attach service policy"
+
+    aws iam attach-role-policy \
+        --role-name lazy-beanstalk-eb-role \
+        --policy-arn arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth || error "Failed to attach enhanced health policy"
+
+    # Clean up the temporary file
+    rm trust-policy.json
+    
+    # Wait for role to propagate
+    echo "Waiting for role to propagate..."
+    sleep 10
+fi
+
+echo "2. Initializing Elastic Beanstalk application..."
 eb init \
     --platform "Docker" \
-    --region us-west-2 \
+    # --region us-west-2 \
     lazy-beanstalk || error "Failed to initialize Elastic Beanstalk application"
 
-echo "2. Checking environment status..."
+echo "3. Checking environment status..."
 if check_env_exists; then
     echo "Environment exists, deploying updates..."
     eb deploy lazy-beanstalk-env || error "Failed to deploy to existing environment"
@@ -28,10 +80,11 @@ else
     echo "Creating new environment..."
     eb create lazy-beanstalk-env \
         --elb-type application \
-        --instance-type t3.micro || error "Failed to create environment"
+        --instance-type t3.micro \
+        --service-role lazy-beanstalk-eb-role || error "Failed to create environment"
 fi
 
-# echo "3. Configuring security group..."
+# echo "Configuring security group..."
 # INSTANCE_ID=$(aws elasticbeanstalk describe-environment-resources \
 #     --environment-name lazy-beanstalk-env \
 #     --query 'EnvironmentResources.Instances[0].Id' \
@@ -50,7 +103,7 @@ fi
 #     error "No security group found for instance"
 # fi
 
-# echo "4. Adding/updating security group rule for ttyd..."
+# echo "Adding/updating security group rule for ttyd..."
 # aws ec2 describe-security-groups \
 #     --group-ids ${SG_ID} \
 #     --query 'SecurityGroups[0].IpPermissions[?FromPort==`7681`]' \
