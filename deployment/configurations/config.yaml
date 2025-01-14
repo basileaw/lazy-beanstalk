@@ -1,0 +1,30 @@
+# AWS Regional Configuration
+aws:
+  region: us-west-2
+  platform: Docker
+
+# Application Configuration
+application:
+  name: lazy-beanstalk
+  environment: lazy-beanstalk-env
+
+# Instance Configuration
+instance:
+  type: t3.micro
+  elb_type: application
+
+# IAM Configuration
+iam:
+  # Elastic Beanstalk service role
+  service_role_name: lazy-beanstalk-eb-role
+  service_role_policies:
+    - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
+    - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
+  
+  # EC2 instance profile
+  instance_profile_name: lazy-beanstalk-ec2-profile
+  instance_role_name: lazy-beanstalk-ec2-role
+  instance_role_policies:
+    - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+    - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+    - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
