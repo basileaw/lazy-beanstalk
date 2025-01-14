@@ -16,7 +16,10 @@ fastapi = "*"
 uvicorn = "*"
 jinja2 = "*"
 rich = "*"
+httpx = "*"
 
 [requires]
 python_version = "3.12"
 system_packages = ["ttyd"]
+
+[dev-packages]

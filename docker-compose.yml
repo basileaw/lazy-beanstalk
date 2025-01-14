@@ -1,8 +1,8 @@
+# docker-compose.yml
 services:
   web:
     build: .
     ports:
-      - "5000:5000"
-      - "7681:7681"
+      - "80:80"
     environment:
       - PYTHONUNBUFFERED=1
