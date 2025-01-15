@@ -1,30 +1,91 @@
 # AWS Regional Configuration
 aws:
   region: us-west-2
-  platform: Docker
+  platform: "64bit Amazon Linux 2023 v4.4.2 running Docker"
+  # Optional: Specify tags for all resources
+  tags:
+    Environment: development
+    Project: lazy-beanstalk
+    ManagedBy: deployment-scripts
 
 # Application Configuration
 application:
   name: lazy-beanstalk
   environment: lazy-beanstalk-env
+  # Optional: Description for the application
+  description: "Lazy Beanstalk Application"
+  # Optional: Environment variables for the application
+  environment_variables:
+    ENVIRONMENT: development
+    # Add any additional environment variables here
 
 # Instance Configuration
 instance:
   type: t3.micro
   elb_type: application
+  # Optional: Auto Scaling settings
+  autoscaling:
+    min_size: 1
+    max_size: 1
+    # metric_type: CPU  # Options: CPU, Network, Queue
+  # Optional: VPC Configuration
+  vpc:
+    # If not specified, uses default VPC
+    # vpc_id: vpc-xxxxx
+    # subnets: 
+    #   - subnet-xxxxx
+    #   - subnet-yyyyy
 
 # IAM Configuration
 iam:
-  # Elastic Beanstalk service role
+  # Service role for Elastic Beanstalk
+  # This role is used by the Elastic Beanstalk service to manage resources
   service_role_name: lazy-beanstalk-eb-role
   service_role_policies:
-    - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
-    - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
-  
-  # EC2 instance profile
+    managed_policies:
+      - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
+      - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
+    # Custom policies should be JSON files placed in deployment/policies/ directory
+    # alongside trust-policy.json and ec2-trust-policy.json
+    custom_policies: []
+
+  # Instance profile and role for EC2 instances
+  # This role is used by your application running on EC2 instances
   instance_profile_name: lazy-beanstalk-ec2-profile
   instance_role_name: lazy-beanstalk-ec2-role
   instance_role_policies:
-    - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
-    - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
-    - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+    # To add AWS-managed policies:
+    # - Add the policy ARN to managed_policies list
+    # Example for Bedrock access:
+    # - arn:aws:iam::aws:policy/AWSBedrockFullAccess
+    managed_policies:
+      - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+      - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+      - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+    # To add custom policies:
+    # 1. Create a JSON policy file in deployment/policies/ directory
+    #    (This is the same directory containing trust-policy.json and ec2-trust-policy.json)
+    # 2. Add the filename to custom_policies list
+    # Example for custom Bedrock permissions:
+    # - bedrock-invoke-policy.json
+    custom_policies: []
+
+# Optional: Advanced Configuration
+# Uncomment and modify as needed
+# advanced:
+#   # Enable enhanced health monitoring
+#   enhanced_health: true
+#   # Enable managed platform updates
+#   managed_updates: true
+#   # Configure CloudWatch logs
+#   cloudwatch_logs:
+#     retention_days: 14
+#   # Configure load balancer
+#   load_balancer:
+#     ssl_cert: arn:aws:acm:region:account:certificate/certificate-id
+#     ssl_policy: ELBSecurityPolicy-2016-08
+#   # Configure rolling updates
+#   rolling_updates:
+#     type: Health  # Time, Health, or Immutable
+#     batch_size: 1
+#     batch_period: 5  # minutes

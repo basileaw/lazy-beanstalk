@@ -3,11 +3,9 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
-[scripts]
-serve = "python wrapper/server.py"
-serve-container = "docker compose up --build --force-recreate"
-ship = "./deployment/ship.sh"
-scrap = "./deployment/scrap.sh"
+[requires]
+python_version = "3.12"
+system_packages = ["ttyd"]
 
 [packages]
 bs4 = ">=0.0.2"
@@ -18,8 +16,13 @@ jinja2 = "*"
 rich = "*"
 httpx = "*"
 
-[requires]
-python_version = "3.12"
-system_packages = ["ttyd"]
-
 [dev-packages]
+pyyaml = "*"
+boto3 = "*"
+botocore = "*"
+
+[scripts]
+serve = "python wrapper/server.py"
+serve-container = "docker compose up --build --force-recreate"
+ship = "./deployment/ship.sh"
+scrap = "./deployment/scrap.sh"
