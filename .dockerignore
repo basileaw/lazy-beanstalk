@@ -1,17 +1,17 @@
-# Ignore everything: 
+
 *
 
-# But include...
+# Ignore everything, except:
 
 ## Docker
 !.dockerignore
 !docker-compose-yml
 !Dockerfile
 
-## Pipenv 
-!Pipfile
-!Pipfile.lock
-
 ## Application Code 
 !application/
 !wrapper/
+
+## Pipenv 
+!Pipfile
+!Pipfile.lock

@@ -24,5 +24,5 @@ botocore = "*"
 [scripts]
 serve = "python wrapper/server.py"
 serve-container = "docker compose up --build --force-recreate"
-ship = "./deployment/ship.sh"
-scrap = "./deployment/scrap.sh"
+ship = "python deployment/manage.py ship"
+scrap = "python deployment/manage.py scrap"

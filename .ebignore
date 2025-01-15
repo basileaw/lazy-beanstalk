@@ -3,11 +3,12 @@
 
 # But include:
 !.ebextensions
+!.elasticbeanstalk
 !.ebignore
-!.dockerignore
 !application/
 !wrapper/
-!.dockerignore
 !Dockerfile
+!.dockerignore
+!docker-compose.yml
 !Pipfile
 !Pipfile.lock

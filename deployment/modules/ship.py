@@ -55,7 +55,7 @@ def create_app_bundle() -> str:
     return str(bundle_path)
 
 @aws_handler
-def setup_iam_role(iam_client, role_name: str, trust_policy_file: str, policy_config: Dict) -> None:
+def setup_iam_role(iam_client, role_name: str, policies_config: Dict) -> None:
     """Create or update an IAM role with specified policies."""
     try:
         iam_client.get_role(RoleName=role_name)
@@ -64,19 +64,19 @@ def setup_iam_role(iam_client, role_name: str, trust_policy_file: str, policy_co
         if e.response['Error']['Code'] != 'NoSuchEntity':
             raise
 
-    # Create role with trust policy
+    # Create role with trust policy from config
     iam_client.create_role(
         RoleName=role_name,
-        AssumeRolePolicyDocument=json.dumps(load_json_file(trust_policy_file))
+        AssumeRolePolicyDocument=json.dumps(load_json_file(policies_config['trust_policy']))
     )
 
     # Attach managed policies
-    for arn in policy_config.get('managed_policies', []):
+    for arn in policies_config.get('managed_policies', []):
         iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
 
     # Create and attach custom policies
     account_id = boto3.client('sts').get_caller_identity()['Account']
-    for policy_file in policy_config.get('custom_policies', []):
+    for policy_file in policies_config.get('custom_policies', []):
         policy_name = f"{role_name}-{policy_file.replace('.json', '')}"
         policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
         
@@ -100,20 +100,41 @@ def ensure_instance_profile(iam_client, config: Dict[str, Any]) -> None:
     profile_name = config['iam']['instance_profile_name']
     role_name = config['iam']['instance_role_name']
     
-    # Set up the role first
-    setup_iam_role(iam_client, role_name, 'ec2-trust-policy.json', config['iam']['instance_role_policies'])
+    # Set up the role first using policies from config
+    setup_iam_role(iam_client, role_name, config['iam']['instance_role_policies'])
     
-    # Create profile if needed
+    # Create or update instance profile
+    profile_exists = True
     try:
-        iam_client.get_instance_profile(InstanceProfileName=profile_name)
+        profile = iam_client.get_instance_profile(InstanceProfileName=profile_name)
+        # Check if role is attached
+        roles = profile['InstanceProfile'].get('Roles', [])
+        if not roles or roles[0]['RoleName'] != role_name:
+            # Remove any existing roles
+            for existing_role in roles:
+                iam_client.remove_role_from_instance_profile(
+                    InstanceProfileName=profile_name,
+                    RoleName=existing_role['RoleName']
+                )
+            # Add our role
+            iam_client.add_role_to_instance_profile(
+                InstanceProfileName=profile_name,
+                RoleName=role_name
+            )
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchEntity':
+            profile_exists = False
             iam_client.create_instance_profile(InstanceProfileName=profile_name)
             iam_client.add_role_to_instance_profile(
                 InstanceProfileName=profile_name,
                 RoleName=role_name
             )
-            time.sleep(10)  # Allow time for profile propagation
+        else:
+            raise
+    
+    # Allow time for profile/role association to propagate
+    if not profile_exists:
+        time.sleep(10)
 
 def log_events(eb_client, env_name: str, last_event_time: Optional[datetime], seen_events: Set[str]) -> datetime:
     """Get and log new environment events."""
@@ -242,7 +263,6 @@ def deploy_application(config: Dict[str, Any]) -> None:
     setup_iam_role(
         iam_client,
         config['iam']['service_role_name'],
-        'trust-policy.json',
         config['iam']['service_role_policies']
     )
     ensure_instance_profile(iam_client, config)
@@ -252,7 +272,7 @@ def deploy_application(config: Dict[str, Any]) -> None:
     if not eb_client.describe_applications(ApplicationNames=[app_name])['Applications']:
         eb_client.create_application(
             ApplicationName=app_name,
-            Description="Application created by deployment script"
+            Description=config.get('application', {}).get('description', 'Application created by deployment script')
         )
     
     # Create and upload application version
