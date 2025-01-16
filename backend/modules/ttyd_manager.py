@@ -23,7 +23,7 @@ class TTYDManager:
              '-p', str(self.port),
              '-t', f'theme={json.dumps(self.theme)}',
              'python',
-             'application/main.py'],
+             'frontend/main.py'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )

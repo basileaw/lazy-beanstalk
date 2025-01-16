@@ -5,7 +5,7 @@
 !.ebextensions
 !.elasticbeanstalk
 !.ebignore
-!application/
+!frontend/
 !backend/
 !Dockerfile
 !.dockerignore
