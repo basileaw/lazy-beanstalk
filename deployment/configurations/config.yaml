@@ -28,7 +28,7 @@ iam:
   service_role_name: lazy-beanstalk-eb-role
   service_role_policies:
     # Trust policy JSON file in deployment/policies/
-    trust_policy: trust-policy.json
+    trust_policy: eb-trust-policy.json
     # AWS-managed policies to attach
     managed_policies:
       - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
