@@ -23,6 +23,8 @@ class TTYDManager:
             ['ttyd',
              '--writable',
              '-p', str(self.port),
+             '-t', 'cursorStyle=block',  
+             '-t', 'cursorBlink=true',
              '-t', f'theme={json.dumps(self.theme)}',
              'python',
              'frontend/main.py'],
