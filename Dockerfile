@@ -1,6 +1,5 @@
 # Dockerfile
 FROM python:3.12-slim
-
 RUN apt-get update && apt-get install -y \
     wget \
     build-essential \
@@ -21,9 +20,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 RUN pip install pipenv
-
 COPY Pipfile Pipfile.lock ./
-
 RUN pipenv install --system --deploy
 
 COPY . .
@@ -35,7 +32,7 @@ RUN rm -f /etc/nginx/sites-enabled/default
 RUN echo ' \
     map $http_upgrade $connection_upgrade { \
     default upgrade; \
-    ""      close; \
+    "" close; \
     } \n\
     server { \
     listen 80 default_server; \
@@ -88,6 +85,8 @@ RUN echo '[supervisord] \n\
 
 EXPOSE 80
 
+# Set environment variables
 ENV IS_CONTAINER=true
+ENV PYTHONUNBUFFERED=1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

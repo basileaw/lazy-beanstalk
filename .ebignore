@@ -9,6 +9,5 @@
 !backend/
 !Dockerfile
 !.dockerignore
-!docker-compose.yml
 !Pipfile
 !Pipfile.lock
