@@ -10,7 +10,7 @@
 
 ## Application Code 
 !application/
-!wrapper/
+!backend/
 
 ## Pipenv 
 !Pipfile

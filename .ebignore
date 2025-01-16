@@ -6,7 +6,7 @@
 !.elasticbeanstalk
 !.ebignore
 !application/
-!wrapper/
+!backend/
 !Dockerfile
 !.dockerignore
 !docker-compose.yml

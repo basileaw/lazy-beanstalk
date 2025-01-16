@@ -18,14 +18,14 @@ class CleanupError(Exception):
 def aws_handler(func):
     """Handle AWS API calls and provide meaningful errors."""
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def backend(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code not in ['NoSuchEntity', 'NoSuchBucket', 'NoSuchKey']:
                 raise CleanupError(f"AWS {error_code}: {e.response['Error']['Message']}")
-    return wrapper
+    return backend
 
 def log_events(eb_client, env_name: str, last_event_time: Optional[datetime], seen_events: Set[str]) -> datetime:
     """Get and log new environment events."""

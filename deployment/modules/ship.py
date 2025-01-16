@@ -22,14 +22,14 @@ class DeployError(Exception):
 def aws_handler(func):
     """Handle AWS API calls and provide meaningful errors."""
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def backend(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code not in ['NoSuchEntity', 'NoSuchBucket']:
                 raise DeployError(f"AWS {error_code}: {e.response['Error']['Message']}")
-    return wrapper
+    return backend
 
 def load_json_file(filename: str) -> Dict:
     """Load and parse a JSON file from the policies directory."""

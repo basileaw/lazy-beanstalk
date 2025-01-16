@@ -79,7 +79,7 @@ RUN echo '[supervisord] \n\
     priority=2 \n\
     \n\
     [program:fastapi] \n\
-    command=python wrapper/server.py \n\
+    command=python backend/server.py \n\
     stdout_logfile=/dev/stdout \n\
     stdout_logfile_maxbytes=0 \n\
     stderr_logfile=/dev/stderr \n\
