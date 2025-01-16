@@ -8,48 +8,36 @@
         document.addEventListener('DOMContentLoaded', function () {
             document.documentElement.style.setProperty('--bg-color', '{{background_color}}');
 
-            function hideScrollbar() {
+            function applyTerminalStyles() {
                 const iframe = document.getElementById('terminal');
                 const iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
 
-                // Try multiple selectors and approaches
                 try {
-                    // Add a style tag to the iframe's head
                     const style = document.createElement('style');
                     style.textContent = `
                         .xterm-viewport {
                             overflow: hidden !important;
                         }
-                        .terminal .xterm .xterm-viewport {
-                            overflow: hidden !important;
-                        }
-                        .xterm-scroll-area {
-                            overflow: hidden !important;
+                        .terminal.xterm {
+                            display: flex !important;
+                            justify-content: center !important;
+                            align-items: center !important;
                         }
                     `;
                     iframeDocument.head.appendChild(style);
-                    console.log('Added stylesheet to iframe');
+                    console.log('Added terminal styles to iframe');
 
-                    // Also try direct style application
-                    const viewport = iframeDocument.querySelector('.xterm-viewport');
-                    if (viewport) {
-                        viewport.style.setProperty('overflow', 'hidden', 'important');
-                        console.log('Applied direct style to viewport');
-                    }
                 } catch (e) {
                     console.error('Style application failed:', e);
-                    // If element isn't found yet, try again shortly
-                    setTimeout(hideScrollbar, 100);
+                    setTimeout(applyTerminalStyles, 100);
                 }
             }
 
-            // Start checking after iframe loads
             document.getElementById('terminal').onload = function () {
-                // Try multiple times to ensure it catches after dynamic content loads
-                hideScrollbar();
-                setTimeout(hideScrollbar, 500);
-                setTimeout(hideScrollbar, 1000);
-                setTimeout(hideScrollbar, 2000);
+                applyTerminalStyles();
+                setTimeout(applyTerminalStyles, 500);
+                setTimeout(applyTerminalStyles, 1000);
+                setTimeout(applyTerminalStyles, 2000);
             };
         });
     </script>
