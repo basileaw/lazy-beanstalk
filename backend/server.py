@@ -1,32 +1,44 @@
+# backend/server.py
 import os
 import sys
 import signal
 import uvicorn
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from modules import TTYDManager
+from modules.ttyd_manager import TTYDManager
+from modules.proxy import ProxyManager, setup_proxy_routes
 
 logger = logging.getLogger("uvicorn")
 
-# Initialize the TTYDManager
+# Initialize managers
 ttyd_manager = TTYDManager()
+proxy_manager = ProxyManager(target_host="127.0.0.1", target_port=7681)
 
-# Create the FastAPI app with the TTYDManager's lifespan
-app = FastAPI(lifespan=ttyd_manager.lifespan)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Coordinated lifespan management for all components"""
+    async with ttyd_manager.lifespan(app):
+        try:
+            yield
+        finally:
+            await proxy_manager.cleanup()
 
-# Update paths to use frontend/static
-PROJECT_ROOT = Path(__file__).parent.parent  # Navigate up to project root
+# Create the FastAPI app
+app = FastAPI(lifespan=lifespan)
+
+# Setup paths
+PROJECT_ROOT = Path(__file__).parent.parent
 STATIC_DIR = PROJECT_ROOT / "frontend" / "static"
-
-logger.info(f"Static directory path: {STATIC_DIR}")  # Add this for debugging
-
 templates = Jinja2Templates(directory=str(STATIC_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Setup proxy routes
+setup_proxy_routes(app, proxy_manager)
 
 @app.get("/health")
 def health_check():
@@ -38,19 +50,15 @@ def health_check():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     try:
-        is_container = os.getenv('IS_CONTAINER', 'false').lower() == 'true'
         host = request.headers.get('host', '').split(':')[0]
         logger.info(f'Using host: {host}')
-
-        # If we're in a container, use the nginx proxy path
-        ttyd_path = "/ttyd/" if is_container else f"http://{host}:7681/"
-
+        
         return templates.TemplateResponse(
             "index.html",
             {
                 "request": request,
                 "host": host,
-                "ttyd_path": ttyd_path,
+                "ttyd_path": "/ttyd/",  # Always use the proxy path
                 "background_color": ttyd_manager.theme["background"]
             }
         )
@@ -59,18 +67,22 @@ async def index(request: Request):
         return str(e)
 
 if __name__ == '__main__':
-    # Register signal handlers for cleanup
+    # Register signal handlers
     signal.signal(signal.SIGINT, lambda s, f: (ttyd_manager.stop(), sys.exit(0)))
     signal.signal(signal.SIGTERM, lambda s, f: (ttyd_manager.stop(), sys.exit(0)))
 
-    # Check for the environment variable to decide if watchfiles should be enabled
+    # Development mode detection
     is_container = os.getenv('IS_CONTAINER', 'false').lower() == 'true'
 
     try:
+        # Determine port based on environment
+        port = int(os.getenv('PORT', '80' if is_container else '5000'))
+        logger.info(f"Starting server on port {port}")
+
         uvicorn_args = {
             "app": "server:app",
             "host": "0.0.0.0",
-            "port": 5000
+            "port": port
         }
 
         if not is_container:

@@ -1,3 +1,5 @@
+# Pipfile
+
 [[source]]
 url = "https://pypi.org/simple"
 verify_ssl = true
@@ -15,6 +17,7 @@ bs4 = ">=0.0.2"
 requests = ">=2.32.3"
 httpx = "*"
 rich = "*"
+websockets = "*"
 
 [dev-packages]
 pyyaml = "*"
