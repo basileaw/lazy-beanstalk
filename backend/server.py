@@ -15,80 +15,61 @@ from modules.proxy import ProxyManager, setup_proxy_routes
 
 logger = logging.getLogger("uvicorn")
 
-# Initialize managers
+# Initialize app and managers
 ttyd_manager = TTYDManager()
-proxy_manager = ProxyManager(target_host="127.0.0.1", target_port=7681)
+proxy_manager = ProxyManager("127.0.0.1", 7681)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Coordinated lifespan management for all components"""
     async with ttyd_manager.lifespan(app):
         try:
             yield
         finally:
             await proxy_manager.cleanup()
 
-# Create the FastAPI app
 app = FastAPI(lifespan=lifespan)
 
-# Setup paths
-PROJECT_ROOT = Path(__file__).parent.parent
-STATIC_DIR = PROJECT_ROOT / "frontend" / "static"
+# Setup static files and proxy
+STATIC_DIR = Path(__file__).parent.parent / "frontend" / "static"
 templates = Jinja2Templates(directory=str(STATIC_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-# Setup proxy routes
 setup_proxy_routes(app, proxy_manager)
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "ok",
-        "ttyd_running": ttyd_manager.is_running
-    }
+    return {"status": "ok", "ttyd_running": ttyd_manager.is_running}
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     try:
         host = request.headers.get('host', '').split(':')[0]
         logger.info(f'Using host: {host}')
-        
-        return templates.TemplateResponse(
-            "index.html",
-            {
-                "request": request,
-                "host": host,
-                "ttyd_path": "/ttyd/",  # Always use the proxy path
-                "background_color": ttyd_manager.theme["background"]
-            }
-        )
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "host": host,
+            "ttyd_path": "/ttyd/",
+            "background_color": ttyd_manager.theme["background"]
+        })
     except Exception as e:
-        logger.error(f'Error in index route: {str(e)}')
+        logger.error(f'Error in index route: {e}')
         return str(e)
 
 if __name__ == '__main__':
-    # Register signal handlers
-    signal.signal(signal.SIGINT, lambda s, f: (ttyd_manager.stop(), sys.exit(0)))
-    signal.signal(signal.SIGTERM, lambda s, f: (ttyd_manager.stop(), sys.exit(0)))
-
-    # Development mode detection
+    # Handle shutdown gracefully
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda s, f: (ttyd_manager.stop(), sys.exit(0)))
+    
+    # Configure server
     is_container = os.getenv('IS_CONTAINER', 'false').lower() == 'true'
+    uvicorn_args = {
+        "app": "server:app",
+        "host": "0.0.0.0",
+        "port": int(os.getenv('PORT', '80' if is_container else '5000')),
+        **({"reload": True, "reload_dirs": ["./"]} if not is_container else {})
+    }
 
     try:
-        # Determine port based on environment
-        port = int(os.getenv('PORT', '80' if is_container else '5000'))
-        logger.info(f"Starting server on port {port}")
-
-        uvicorn_args = {
-            "app": "server:app",
-            "host": "0.0.0.0",
-            "port": port
-        }
-
-        if not is_container:
-            uvicorn_args["reload"] = True
-            uvicorn_args["reload_dirs"] = ["./"]
-
+        logger.info(f"Starting server on port {uvicorn_args['port']}")
         uvicorn.run(**uvicorn_args)
     finally:
         ttyd_manager.stop()
