@@ -22,14 +22,14 @@ class DeployError(Exception):
 def aws_handler(func):
     """Handle AWS API calls and provide meaningful errors."""
     @wraps(func)
-    def backend(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code not in ['NoSuchEntity', 'NoSuchBucket']:
                 raise DeployError(f"AWS {error_code}: {e.response['Error']['Message']}")
-    return backend
+    return wrapper
 
 def load_json_file(filename: str) -> Dict:
     """Load and parse a JSON file from the policies directory."""
@@ -209,7 +209,13 @@ def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> Non
          'Value': config['iam']['service_role_name']},
         {'Namespace': 'aws:autoscaling:launchconfiguration',
          'OptionName': 'InstanceType',
-         'Value': config['instance']['type']}
+         'Value': config['instance']['type']},
+        {'Namespace': 'aws:autoscaling:asg',
+         'OptionName': 'MinSize',
+         'Value': str(config['instance']['autoscaling']['min_instances'])},
+        {'Namespace': 'aws:autoscaling:asg',
+         'OptionName': 'MaxSize',
+         'Value': str(config['instance']['autoscaling']['max_instances'])}
     ]
     
     if exists:
