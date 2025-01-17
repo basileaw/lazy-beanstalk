@@ -1,13 +1,11 @@
-"""
-Common utilities for Elastic Beanstalk deployment and cleanup operations.
-"""
+"""Common utilities for Elastic Beanstalk deployment operations."""
 
 import json
 import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Dict, Any, Set, Optional, List, Callable
+from typing import Dict, Set, Optional, List, Callable
 import boto3
 from botocore.exceptions import ClientError
 
@@ -16,44 +14,43 @@ class DeploymentError(Exception):
     pass
 
 def aws_handler(func: Callable) -> Callable:
-    """Handle AWS API calls and provide meaningful errors."""
+    """Decorator to handle AWS API errors."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code not in ['NoSuchEntity', 'NoSuchBucket', 'NoSuchKey']:
-                raise DeploymentError(f"AWS {error_code}: {e.response['Error']['Message']}")
+            code = e.response['Error']['Code']
+            if code not in ['NoSuchEntity', 'NoSuchBucket', 'NoSuchKey']:
+                raise DeploymentError(f"AWS {code}: {e.response['Error']['Message']}")
     return wrapper
 
-def load_policy_file(filename: str) -> Dict:
-    """Load and parse a JSON policy file from the policies directory."""
+def load_policy(filename: str) -> Dict:
+    """Load JSON policy file."""
     try:
         return json.loads((Path(__file__).parent.parent / 'policies' / filename).read_text())
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        raise DeploymentError(f"Failed to load {filename}: {str(e)}")
+    except Exception as e:
+        raise DeploymentError(f"Failed to load {filename}: {e}")
 
-def log_events(eb_client, env_name: str, last_event_time: Optional[datetime], seen_events: Set[str]) -> datetime:
-    """Get and log new environment events."""
+def print_events(eb_client, env_name: str, after: Optional[datetime], seen: Set[str]) -> datetime:
+    """Print and track new environment events."""
     kwargs = {'EnvironmentName': env_name, 'MaxRecords': 10}
-    if last_event_time:
-        kwargs['StartTime'] = last_event_time
+    if after:
+        kwargs['StartTime'] = after
 
     for event in reversed(eb_client.describe_events(**kwargs).get('Events', [])):
-        event_key = f"{event['EventDate'].isoformat()}-{event['Message']}"
-        if event_key not in seen_events:
+        key = f"{event['EventDate'].isoformat()}-{event['Message']}"
+        if key not in seen:
             print(f"{event['EventDate']:%Y-%m-%d %H:%M:%S} {event['Severity']}: {event['Message']}")
-            seen_events.add(event_key)
-            last_event_time = event['EventDate']
+            seen.add(key)
+            after = event['EventDate']
     
-    return last_event_time
+    return after
 
-def wait_for_environment(eb_client, env_name: str, target_status: str) -> None:
+def wait_for_env_status(eb_client, env_name: str, target: str) -> None:
     """Wait for environment to reach target status."""
-    print(f"Waiting for environment to be {target_status}...")
-    last_event_time = None
-    seen_events = set()
+    print(f"Waiting for environment to be {target}...")
+    last_time, seen = None, set()
     
     while True:
         try:
@@ -63,26 +60,62 @@ def wait_for_environment(eb_client, env_name: str, target_status: str) -> None:
             )['Environments']
             
             if not envs:
+                if target == 'Terminated':
+                    break
                 raise DeploymentError(f"Environment {env_name} not found")
             
             status = envs[0]['Status']
-            last_event_time = log_events(eb_client, env_name, last_event_time, seen_events)
+            last_time = print_events(eb_client, env_name, last_time, seen)
             
-            if status == target_status:
+            if status == target:
                 break
-            elif status == 'Failed':
-                raise DeploymentError(f"Environment {env_name} failed to reach {target_status} status")
+            if status == 'Failed':
+                raise DeploymentError(f"Environment failed to reach {target} status")
                 
         except ClientError as e:
-            if target_status == 'Terminated' and e.response['Error']['Code'] == 'ResourceNotFoundException':
+            if target == 'Terminated' and e.response['Error']['Code'] == 'ResourceNotFoundException':
                 break
             raise
             
         time.sleep(5)
 
+def check_env_exists(eb_client) -> bool:
+    """Check if any environments exist."""
+    return bool(eb_client.describe_environments(IncludeDeleted=False)['Environments'])
+
+def get_env_settings(config: Dict) -> List[Dict[str, str]]:
+    """Get environment settings from config."""
+    return [
+        {
+            'Namespace': 'aws:autoscaling:launchconfiguration',
+            'OptionName': 'IamInstanceProfile',
+            'Value': config['iam']['instance_profile_name']
+        },
+        {
+            'Namespace': 'aws:elasticbeanstalk:environment',
+            'OptionName': 'ServiceRole',
+            'Value': config['iam']['service_role_name']
+        },
+        {
+            'Namespace': 'aws:autoscaling:launchconfiguration',
+            'OptionName': 'InstanceType',
+            'Value': config['instance']['type']
+        },
+        {
+            'Namespace': 'aws:autoscaling:asg',
+            'OptionName': 'MinSize',
+            'Value': str(config['instance']['autoscaling']['min_instances'])
+        },
+        {
+            'Namespace': 'aws:autoscaling:asg',
+            'OptionName': 'MaxSize',
+            'Value': str(config['instance']['autoscaling']['max_instances'])
+        }
+    ]
+
 @aws_handler
-def handle_iam_role(iam_client, role_name: str, policies_config: Dict, action: str = 'create') -> None:
-    """Handle IAM role creation or cleanup."""
+def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'create') -> None:
+    """Create or clean up IAM role and policies."""
     if action == 'create':
         try:
             iam_client.get_role(RoleName=role_name)
@@ -91,89 +124,57 @@ def handle_iam_role(iam_client, role_name: str, policies_config: Dict, action: s
             if e.response['Error']['Code'] != 'NoSuchEntity':
                 raise
 
-        # Create role with trust policy
+        # Create role
         iam_client.create_role(
             RoleName=role_name,
-            AssumeRolePolicyDocument=json.dumps(load_policy_file(policies_config['trust_policy']))
+            AssumeRolePolicyDocument=json.dumps(load_policy(policies['trust_policy']))
         )
 
-        # Attach managed policies
-        for arn in policies_config.get('managed_policies', []):
+        # Attach policies
+        for arn in policies.get('managed_policies', []):
             iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
 
-        # Create and attach custom policies
-        account_id = boto3.client('sts').get_caller_identity()['Account']
-        for policy_file in policies_config.get('custom_policies', []):
-            policy_name = f"{role_name}-{policy_file.replace('.json', '')}"
+        # Handle custom policies
+        account = boto3.client('sts').get_caller_identity()['Account']
+        for policy_file in policies.get('custom_policies', []):
+            name = f"{role_name}-{policy_file.replace('.json', '')}"
+            arn = f"arn:aws:iam::{account}:policy/{name}"
             
             try:
-                response = iam_client.create_policy(
-                    PolicyName=policy_name,
-                    PolicyDocument=json.dumps(load_policy_file(policy_file))
+                policy = iam_client.create_policy(
+                    PolicyName=name,
+                    PolicyDocument=json.dumps(load_policy(policy_file))
                 )
-                policy_arn = response['Policy']['Arn']
+                arn = policy['Policy']['Arn']
             except ClientError as e:
-                if e.response['Error']['Code'] == 'EntityAlreadyExists':
-                    policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
-                else:
+                if e.response['Error']['Code'] != 'EntityAlreadyExists':
                     raise
             
-            iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+            iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
 
         iam_client.get_waiter('role_exists').wait(RoleName=role_name)
 
     elif action == 'cleanup':
-        # Detach and cleanup managed policies
-        for arn in policies_config.get('managed_policies', []):
+        # Detach and clean up policies
+        account = boto3.client('sts').get_caller_identity()['Account']
+        
+        for arn in policies.get('managed_policies', []):
             try:
                 iam_client.detach_role_policy(RoleName=role_name, PolicyArn=arn)
-                print(f"Detached managed policy: {arn}")
             except ClientError:
-                pass
+                continue
 
-        # Find, detach, and delete custom policies
-        account_id = boto3.client('sts').get_caller_identity()['Account']
-        for policy_file in policies_config.get('custom_policies', []):
-            policy_name = f"{role_name}-{policy_file.replace('.json', '')}"
-            policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
-            
+        for policy_file in policies.get('custom_policies', []):
             try:
-                iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
-                iam_client.delete_policy(PolicyArn=policy_arn)
-                print(f"Cleaned up custom policy: {policy_name}")
+                name = f"{role_name}-{policy_file.replace('.json', '')}"
+                arn = f"arn:aws:iam::{account}:policy/{name}"
+                iam_client.detach_role_policy(RoleName=role_name, PolicyArn=arn)
+                iam_client.delete_policy(PolicyArn=arn)
             except ClientError:
-                pass
+                continue
 
-        # Delete the role
         try:
             iam_client.delete_role(RoleName=role_name)
-            print(f"Deleted role: {role_name}")
         except ClientError as e:
             if e.response['Error']['Code'] != 'NoSuchEntity':
                 raise
-
-def check_eb_resources(eb_client) -> bool:
-    """Check if any environments exist that might be using our resources."""
-    response = eb_client.describe_environments(IncludeDeleted=False)
-    return len(response['Environments']) > 0
-
-def get_environment_settings(config: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Get common environment settings for creation/updates."""
-    settings = [
-        {'Namespace': 'aws:autoscaling:launchconfiguration',
-         'OptionName': 'IamInstanceProfile',
-         'Value': config['iam']['instance_profile_name']},
-        {'Namespace': 'aws:elasticbeanstalk:environment',
-         'OptionName': 'ServiceRole',
-         'Value': config['iam']['service_role_name']},
-        {'Namespace': 'aws:autoscaling:launchconfiguration',
-         'OptionName': 'InstanceType',
-         'Value': config['instance']['type']},
-        {'Namespace': 'aws:autoscaling:asg',
-         'OptionName': 'MinSize',
-         'Value': str(config['instance']['autoscaling']['min_instances'])},
-        {'Namespace': 'aws:autoscaling:asg',
-         'OptionName': 'MaxSize',
-         'Value': str(config['instance']['autoscaling']['max_instances'])}
-    ]
-    return settings

@@ -38,7 +38,7 @@ def ensure_instance_profile(iam_client, config: Dict[str, Any]) -> None:
     role_name = config['iam']['instance_role_name']
     
     # Set up the role first
-    common.handle_iam_role(iam_client, role_name, config['iam']['instance_role_policies'])
+    common.manage_iam_role(iam_client, role_name, config['iam']['instance_role_policies'])
     
     try:
         iam_client.get_instance_profile(InstanceProfileName=profile_name)
@@ -97,7 +97,7 @@ def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> Non
         IncludeDeleted=False
     )['Environments'])
     
-    settings = common.get_environment_settings(config)
+    settings = common.get_env_settings(config)
     
     if exists:
         eb_client.update_environment(
@@ -119,7 +119,7 @@ def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> Non
             OptionSettings=settings
         )
     
-    common.wait_for_environment(eb_client, env_name, 'Ready')
+    common.wait_for_env_status(eb_client, env_name, 'Ready')
 
 def deploy_application(config: Dict[str, Any]) -> None:
     """Deploy the application to Elastic Beanstalk."""
@@ -147,7 +147,7 @@ def deploy_application(config: Dict[str, Any]) -> None:
     }))
     
     # Set up IAM resources
-    common.handle_iam_role(
+    common.manage_iam_role(
         iam_client,
         config['iam']['service_role_name'],
         config['iam']['service_role_policies']
