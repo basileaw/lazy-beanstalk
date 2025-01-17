@@ -14,10 +14,29 @@ from modules.ship import deploy_application
 from modules.scrap import cleanup_application
 from modules.common import DeploymentError
 
+def get_project_name() -> str:
+    """Retrieve the project name from the root folder."""
+    return Path(__file__).parent.parent.name
+
 def load_config() -> Dict:
-    """Load and validate configuration."""
+    """Load and validate configuration, replacing placeholders."""
     try:
         config = yaml.safe_load((Path(__file__).parent / "configurations" / "config.yml").read_text())
+        project_name = get_project_name()
+
+        # Replace placeholders with actual values
+        def replace_placeholders(obj):
+            if isinstance(obj, str):
+                return obj.replace('${PROJECT_NAME}', project_name)
+            elif isinstance(obj, dict):
+                return {k: replace_placeholders(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [replace_placeholders(i) for i in obj]
+            return obj
+
+        config = replace_placeholders(config)
+
+        # Validate required fields
         required = {
             'aws': ['region', 'platform'],
             'application': ['name', 'environment'],

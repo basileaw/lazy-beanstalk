@@ -4,14 +4,14 @@ aws:
   platform: "64bit Amazon Linux 2023 v4.4.2 running Docker"
   tags:
     Environment: development
-    Project: lazy-beanstalk
+    Project: ${PROJECT_NAME}
     ManagedBy: deployment-scripts
 
 # Application Configuration
 application:
-  name: lazy-beanstalk
-  environment: lazy-beanstalk-env
-  description: "Lazy Beanstalk Application"
+  name: ${PROJECT_NAME}
+  environment: ${PROJECT_NAME}-env
+  description: "${PROJECT_NAME} Application"
 
 # Instance Configuration
 instance:
@@ -21,11 +21,10 @@ instance:
     min_instances: 1
     max_instances: 1
 
-
 # IAM Configuration
 iam:
   # Service role for Elastic Beanstalk
-  service_role_name: lazy-beanstalk-eb-role
+  service_role_name: ${PROJECT_NAME}-eb-role
   service_role_policies:
     # Trust policy JSON file in deployment/policies/
     trust_policy: eb-trust-policy.json
@@ -33,12 +32,10 @@ iam:
     managed_policies:
       - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
       - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
-    # # Custom policy JSON files in deployment/policies/
-    # custom_policies: []
 
   # Instance profile and role for EC2 instances
-  instance_profile_name: lazy-beanstalk-ec2-profile
-  instance_role_name: lazy-beanstalk-ec2-role
+  instance_profile_name: ${PROJECT_NAME}-ec2-profile
+  instance_role_name: ${PROJECT_NAME}-ec2-role
   instance_role_policies:
     # Trust policy JSON file in deployment/policies/
     trust_policy: ec2-trust-policy.json
@@ -47,6 +44,3 @@ iam:
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
-    # Custom policy JSON files in deployment/policies/
-    # custom_policies:
-    #   - bedrock-invoke-policy.json

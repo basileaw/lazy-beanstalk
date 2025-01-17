@@ -5,8 +5,34 @@ from pathlib import Path
 from typing import Dict
 import boto3
 from botocore.exceptions import ClientError
+import yaml
 
 from . import common
+
+def get_project_name() -> str:
+    """Retrieve the project name from the root folder."""
+    return Path(__file__).parent.parent.parent.name
+
+def load_config() -> Dict:
+    """Load configuration from YAML and replace placeholders."""
+    config_path = Path(__file__).parent.parent / "configurations" / "config.yml"
+    try:
+        config = yaml.safe_load(config_path.read_text())
+        project_name = get_project_name()
+
+        # Replace placeholders with actual values
+        def replace_placeholders(obj):
+            if isinstance(obj, str):
+                return obj.replace('${PROJECT_NAME}', project_name)
+            elif isinstance(obj, dict):
+                return {k: replace_placeholders(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [replace_placeholders(i) for i in obj]
+            return obj
+
+        return replace_placeholders(config)
+    except Exception as e:
+        raise common.DeploymentError(f"Failed to load config: {e}")
 
 def cleanup_local_config() -> None:
     """Remove local EB CLI configuration."""
@@ -24,7 +50,7 @@ def cleanup_https(config: Dict) -> None:
     
     try:
         # Find and remove DNS record first (don't rely on load balancer existing)
-        domain = f"lazy-beanstalk.basileaw.people.aws.dev"
+        domain = f"{config['application']['name']}.basileaw.people.aws.dev"
         zones = route53_client.list_hosted_zones()['HostedZones']
         zone = next((z for z in zones if domain.endswith(z['Name'].rstrip('.'))), None)
         

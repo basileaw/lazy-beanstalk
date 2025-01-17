@@ -14,21 +14,38 @@ from botocore.exceptions import ClientError
 sys.path.append(str(Path(__file__).parent.parent))
 from modules.common import aws_handler, DeploymentError
 
+def get_project_name() -> str:
+    """Retrieve the project name from the root folder."""
+    return Path(__file__).parent.parent.parent.name
+
 def load_config() -> Dict:
-    """Load configuration from YAML."""
+    """Load configuration from YAML and replace placeholders."""
     config_path = Path(__file__).parent.parent / "configurations" / "config.yml"
     try:
-        return yaml.safe_load(config_path.read_text())
+        config = yaml.safe_load(config_path.read_text())
+        project_name = get_project_name()
+
+        # Replace placeholders with actual values
+        def replace_placeholders(obj):
+            if isinstance(obj, str):
+                return obj.replace('${PROJECT_NAME}', project_name)
+            elif isinstance(obj, dict):
+                return {k: replace_placeholders(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [replace_placeholders(i) for i in obj]
+            return obj
+
+        return replace_placeholders(config)
     except Exception as e:
         raise DeploymentError(f"Failed to load config: {e}")
 
 @aws_handler
-def get_certificate_info(acm_client, certificate_id: str) -> Tuple[str, str]:
-    """Get certificate ARN and domain name."""
+def get_certificate_info(acm_client, certificate_id: str, project_name: str) -> Tuple[str, str]:
+    """Get certificate ARN and domain name, replacing wildcard with project name."""
     try:
         response = acm_client.describe_certificate(CertificateArn=certificate_id)
         cert = response['Certificate']
-        domain = cert['DomainName'].replace('*', 'lazy-beanstalk')
+        domain = cert['DomainName'].replace('*', project_name)
         return certificate_id, domain
     except ClientError as e:
         if e.response['Error']['Code'] == 'ResourceNotFoundException':
@@ -168,7 +185,8 @@ def enable_https(config: Dict, certificate_id: str) -> None:
     ec2_client = session.client('ec2')
     
     print("Finding certificate...")
-    cert_arn, domain = get_certificate_info(acm_client, certificate_id)
+    project_name = get_project_name()
+    cert_arn, domain = get_certificate_info(acm_client, certificate_id, project_name)
     
     print("Finding hosted zone...")
     zone_id = get_hosted_zone_id(route53_client, domain)
