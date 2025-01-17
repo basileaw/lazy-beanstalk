@@ -1,223 +1,236 @@
 """
-Enables HTTPS for an Elastic Beanstalk environment using ACM certificate and Route 53.
+Secure your Elastic Beanstalk environment via HTTPS using ACM and Route 53.
+Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
 """
 
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Tuple
 import yaml
 import boto3
 from botocore.exceptions import ClientError
 
 # Add deployment directory to path for standalone testing
 sys.path.append(str(Path(__file__).parent.parent))
+
 from modules.common import aws_handler, DeploymentError
 
+
 def get_project_name() -> str:
-    """Retrieve the project name from the root folder."""
+    """Return the name of the root-level folder (project)."""
     return Path(__file__).parent.parent.parent.name
 
-def load_config() -> Dict:
-    """Load configuration from YAML and replace placeholders."""
-    config_path = Path(__file__).parent.parent / "configurations" / "config.yml"
-    try:
-        config = yaml.safe_load(config_path.read_text())
-        project_name = get_project_name()
 
-        # Replace placeholders with actual values
+def load_config() -> Dict[str, Any]:
+    """Load YAML config and replace `${PROJECT_NAME}` placeholders."""
+    path = Path(__file__).parent.parent / "configurations" / "config.yml"
+    try:
+        raw_config = yaml.safe_load(path.read_text())
+        project = get_project_name()
+
         def replace_placeholders(obj):
             if isinstance(obj, str):
-                return obj.replace('${PROJECT_NAME}', project_name)
-            elif isinstance(obj, dict):
+                return obj.replace('${PROJECT_NAME}', project)
+            if isinstance(obj, dict):
                 return {k: replace_placeholders(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
+            if isinstance(obj, list):
                 return [replace_placeholders(i) for i in obj]
             return obj
 
-        return replace_placeholders(config)
+        return replace_placeholders(raw_config)
     except Exception as e:
         raise DeploymentError(f"Failed to load config: {e}")
 
-@aws_handler
-def get_certificate_info(acm_client, certificate_id: str, project_name: str) -> Tuple[str, str]:
-    """Get certificate ARN and domain name, replacing wildcard with project name."""
+
+def pick_certificate(acm_client) -> str:
+    """Pick or auto-select an ISSUED ACM certificate."""
     try:
-        response = acm_client.describe_certificate(CertificateArn=certificate_id)
-        cert = response['Certificate']
-        domain = cert['DomainName'].replace('*', project_name)
-        return certificate_id, domain
+        certs = acm_client.list_certificates(CertificateStatuses=['ISSUED']).get('CertificateSummaryList', [])
+    except ClientError as e:
+        raise DeploymentError(f"Failed to list certificates: {e}")
+
+    if not certs:
+        raise DeploymentError("No ISSUED certificates found in ACM.")
+
+    if len(certs) == 1:
+        c = certs[0]
+        print(f"Only one certificate:\n  Domain: {c['DomainName']}\n  ARN: {c['CertificateArn']}")
+        return c['CertificateArn']
+
+    print("Multiple ISSUED certificates found. Choose one:")
+    for i, c in enumerate(certs, 1):
+        print(f"{i}) {c.get('DomainName','?')} ({c['CertificateArn']})")
+
+    while True:
+        try:
+            sel = int(input("Enter certificate number: "))
+            if 1 <= sel <= len(certs):
+                chosen = certs[sel - 1]
+                print(f"Selected: {chosen['DomainName']} ({chosen['CertificateArn']})")
+                return chosen['CertificateArn']
+        except ValueError:
+            pass
+        print("Invalid selection. Try again.")
+
+
+@aws_handler
+def get_certificate_info(acm, cert_arn: str, project: str) -> Tuple[str, str]:
+    """Return the certificate ARN and domain (replace '*' with project name)."""
+    try:
+        c = acm.describe_certificate(CertificateArn=cert_arn)['Certificate']
+        return cert_arn, c['DomainName'].replace('*', project)
     except ClientError as e:
         if e.response['Error']['Code'] == 'ResourceNotFoundException':
-            raise DeploymentError(f"Certificate {certificate_id} not found")
+            raise DeploymentError(f"Certificate {cert_arn} not found.")
         raise
 
-@aws_handler
-def get_hosted_zone_id(route53_client, domain_name: str) -> str:
-    """Find matching hosted zone for domain."""
-    zones = route53_client.list_hosted_zones()['HostedZones']
-    matching_zones = [
-        zone for zone in zones 
-        if domain_name.endswith(zone['Name'].rstrip('.'))
-    ]
-    
-    if not matching_zones:
-        raise DeploymentError(f"No hosted zone found for domain {domain_name}")
-    
-    # Use the most specific (longest) matching zone
-    return max(matching_zones, key=lambda z: len(z['Name']))['Id']
 
 @aws_handler
-def find_load_balancer(eb_client, elbv2_client, env_name: str) -> str:
-    """Get the ALB ARN for the environment."""
-    env = eb_client.describe_environments(
-        EnvironmentNames=[env_name]
-    )['Environments'][0]
-    
-    # Find the matching load balancer
-    load_balancers = elbv2_client.describe_load_balancers()['LoadBalancers']
-    
-    for lb in load_balancers:
+def get_hosted_zone_id(r53, domain: str) -> str:
+    """Return the ID of the best-matching hosted zone for `domain`."""
+    zones = r53.list_hosted_zones()['HostedZones']
+    matches = [z for z in zones if domain.endswith(z['Name'].rstrip('.'))]
+    if not matches:
+        raise DeploymentError(f"No hosted zone found for domain {domain}")
+    return max(matches, key=lambda z: len(z['Name']))['Id']
+
+
+@aws_handler
+def find_load_balancer(eb, elbv2, env_name: str) -> str:
+    """Return the ALB ARN for the given EB environment name."""
+    env = eb.describe_environments(EnvironmentNames=[env_name])['Environments'][0]
+    lbs = elbv2.describe_load_balancers()['LoadBalancers']
+    for lb in lbs:
         if lb['Type'].lower() == 'application':
-            tags = elbv2_client.describe_tags(
-                ResourceArns=[lb['LoadBalancerArn']]
-            )['TagDescriptions'][0]['Tags']
-            
-            env_tag = next((tag for tag in tags if tag['Key'] == 'elasticbeanstalk:environment-name'), None)
-            if env_tag and env_tag['Value'] == env_name:
+            tags = elbv2.describe_tags(ResourceArns=[lb['LoadBalancerArn']])['TagDescriptions'][0]['Tags']
+            env_tag = next((t for t in tags if t['Key'] == 'elasticbeanstalk:environment-name'), {})
+            if env_tag.get('Value') == env_name:
                 return lb['LoadBalancerArn']
-    
-    raise DeploymentError("No application load balancer found for environment")
+    raise DeploymentError("No ALB found for environment.")
+
 
 @aws_handler
-def ensure_security_group_https(ec2_client, elbv2_client, lb_arn: str) -> None:
-    """Ensure load balancer security group allows HTTPS."""
-    # Get the security group ID from the load balancer
-    lb = elbv2_client.describe_load_balancers(LoadBalancerArns=[lb_arn])['LoadBalancers'][0]
-    security_groups = lb['SecurityGroups']
-    
-    for sg_id in security_groups:
-        # Check if HTTPS rule exists
-        sg = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
-        https_rule_exists = any(
-            permission['IpProtocol'] == 'tcp' and
-            permission.get('FromPort', 0) <= 443 and
-            permission.get('ToPort', 0) >= 443
-            for permission in sg['IpPermissions']
-        )
-        
-        if not https_rule_exists:
-            print(f"Adding HTTPS inbound rule to security group {sg_id}")
-            ec2_client.authorize_security_group_ingress(
+def ensure_security_group_https(ec2, elbv2, lb_arn: str) -> None:
+    """Authorize inbound HTTPS if missing on the LB's SG."""
+    lb = elbv2.describe_load_balancers(LoadBalancerArns=[lb_arn])['LoadBalancers'][0]
+    for sg_id in lb['SecurityGroups']:
+        sg = ec2.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
+        if not any(
+            p['IpProtocol'] == 'tcp' and p.get('FromPort') == 443 and p.get('ToPort') == 443
+            for p in sg['IpPermissions']
+        ):
+            print(f"Adding HTTPS rule to SG {sg_id}")
+            ec2.authorize_security_group_ingress(
                 GroupId=sg_id,
                 IpPermissions=[{
-                    'IpProtocol': 'tcp',
-                    'FromPort': 443,
-                    'ToPort': 443,
+                    'IpProtocol': 'tcp', 'FromPort': 443, 'ToPort': 443,
                     'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from anywhere'}]
                 }]
             )
 
-@aws_handler
-def configure_https(elbv2_client, lb_arn: str, cert_arn: str) -> None:
-    """Configure HTTPS listener on the load balancer."""
-    # Check if HTTPS listener already exists
-    listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
-    https_listener = next((l for l in listeners if l['Port'] == 443), None)
-    
-    if https_listener:
-        print("HTTPS listener already exists")
-        return
 
-    # Find the target group from HTTP listener
+@aws_handler
+def configure_https(elbv2, lb_arn: str, cert_arn: str) -> None:
+    """Create an HTTPS listener if it doesn't exist."""
+    listeners = elbv2.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+    if any(l['Port'] == 443 for l in listeners):
+        print("HTTPS listener already exists.")
+        return
     http_listener = next((l for l in listeners if l['Port'] == 80), None)
     if not http_listener:
-        raise DeploymentError("No HTTP listener found")
-    
-    target_group_arn = http_listener['DefaultActions'][0]['TargetGroupArn']
-    
-    # Create HTTPS listener
-    elbv2_client.create_listener(
-        LoadBalancerArn=lb_arn,
-        Protocol='HTTPS',
-        Port=443,
+        raise DeploymentError("No HTTP listener found.")
+    elbv2.create_listener(
+        LoadBalancerArn=lb_arn, Protocol='HTTPS', Port=443,
         Certificates=[{'CertificateArn': cert_arn}],
         SslPolicy='ELBSecurityPolicy-2016-08',
-        DefaultActions=[{
-            'Type': 'forward',
-            'TargetGroupArn': target_group_arn
-        }]
+        DefaultActions=[{'Type': 'forward', 'TargetGroupArn': http_listener['DefaultActions'][0]['TargetGroupArn']}]
     )
-    print("HTTPS listener configured")
+    print("HTTPS listener configured.")
+
 
 @aws_handler
-def create_dns_record(route53_client, hosted_zone_id: str, domain_name: str, lb_dns: str) -> None:
-    """Create CNAME record pointing to the load balancer."""
-    route53_client.change_resource_record_sets(
-        HostedZoneId=hosted_zone_id,
+def create_dns_record(r53, zone_id: str, domain: str, lb_dns: str) -> dict:
+    """UPSERT a CNAME record pointing `domain` to `lb_dns`."""
+    resp = r53.change_resource_record_sets(
+        HostedZoneId=zone_id,
         ChangeBatch={
             'Changes': [{
                 'Action': 'UPSERT',
                 'ResourceRecordSet': {
-                    'Name': domain_name,
-                    'Type': 'CNAME',
-                    'TTL': 300,
+                    'Name': domain, 'Type': 'CNAME', 'TTL': 300,
                     'ResourceRecords': [{'Value': lb_dns}]
                 }
             }]
         }
     )
-    print(f"DNS record created for {domain_name}")
+    print(f"DNS record UPSERT for {domain}")
+    return resp
 
-def enable_https(config: Dict, certificate_id: str) -> None:
-    """
-    Enable HTTPS for the Elastic Beanstalk environment.
-    
-    Args:
-        config: Application configuration dictionary
-        certificate_id: ACM certificate ID or ARN
-    """
-    session = boto3.Session(region_name=config['aws']['region'])
-    acm_client = session.client('acm')
-    route53_client = session.client('route53')
-    eb_client = session.client('elasticbeanstalk')
-    elbv2_client = session.client('elbv2')
-    ec2_client = session.client('ec2')
-    
+
+def wait_for_dns_sync(r53, change_id: str) -> None:
+    """Poll Route53 until the record change is INSYNC."""
+    print("Waiting for DNS changes to propagate in Route 53", end="", flush=True)
+    while True:
+        try:
+            status = r53.get_change(Id=change_id)['ChangeInfo']['Status']
+        except ClientError as e:
+            print()  # newline before error
+            raise DeploymentError(f"Error checking DNS change status: {e}")
+        if status == 'INSYNC':
+            print("\nDNS changes are now in sync (INSYNC).")
+            break
+        print(".", end="", flush=True)
+        time.sleep(15)
+
+
+def enable_https(config: Dict[str, Any], cert_id: str) -> None:
+    """Main driver for enabling HTTPS on EB environment."""
+    region = config['aws']['region']
+    session = boto3.Session(region_name=region)
+    acm = session.client('acm')
+    r53 = session.client('route53')
+    eb = session.client('elasticbeanstalk')
+    elbv2 = session.client('elbv2')
+    ec2 = session.client('ec2')
+
     print("Finding certificate...")
     project_name = get_project_name()
-    cert_arn, domain = get_certificate_info(acm_client, certificate_id, project_name)
-    
+    cert_arn, domain = get_certificate_info(acm, cert_id, project_name)
+
     print("Finding hosted zone...")
-    zone_id = get_hosted_zone_id(route53_client, domain)
-    
+    zone_id = get_hosted_zone_id(r53, domain)
+
     print("Finding load balancer...")
-    lb_arn = find_load_balancer(eb_client, elbv2_client, config['application']['environment'])
-    lb_dns = elbv2_client.describe_load_balancers(
-        LoadBalancerArns=[lb_arn]
-    )['LoadBalancers'][0]['DNSName']
-    
+    lb_arn = find_load_balancer(eb, elbv2, config['application']['environment'])
+    lb_dns = elbv2.describe_load_balancers(LoadBalancerArns=[lb_arn])['LoadBalancers'][0]['DNSName']
+
     print("Ensuring security group allows HTTPS...")
-    ensure_security_group_https(ec2_client, elbv2_client, lb_arn)
-    
+    ensure_security_group_https(ec2, elbv2, lb_arn)
+
     print("Configuring HTTPS listener...")
-    configure_https(elbv2_client, lb_arn, cert_arn)
-    
+    configure_https(elbv2, lb_arn, cert_arn)
+
     print("Creating DNS record...")
-    create_dns_record(route53_client, zone_id, domain, lb_dns)
-    
-    print(f"\nHTTPS enabled!")
-    print(f"You can now access your application at: https://{domain}")
-    print("Note: It may take a few minutes for DNS changes to propagate")
+    resp = create_dns_record(r53, zone_id, domain, lb_dns)
+    wait_for_dns_sync(r53, resp['ChangeInfo']['Id'])
+
+    print("\nHTTPS enabled!")
+    print(f"Access your app at: https://{domain}")
+    print("Note: Full global DNS propagation may require additional time.")
+
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("Usage: python secure.py <certificate-id>")
-        sys.exit(1)
-    
     try:
-        config = load_config()
-        enable_https(config, sys.argv[1])
+        cfg = load_config()
+        # Prompt or auto-select certificate
+        session = boto3.Session(region_name=cfg['aws']['region'])
+        acm_client = session.client('acm')
+        chosen_cert = pick_certificate(acm_client)
+
+        # Enable HTTPS
+        enable_https(cfg, chosen_cert)
+
     except DeploymentError as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e}")
         sys.exit(1)
