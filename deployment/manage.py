@@ -9,9 +9,12 @@ import click
 import yaml
 from typing import Dict
 
+import boto3
+
 sys.path.append(str(Path(__file__).parent))
 from modules.ship import deploy_application
 from modules.scrap import cleanup_application
+from modules.secure import pick_certificate, enable_https
 from modules.common import DeploymentError
 
 def get_project_name() -> str:
@@ -73,6 +76,19 @@ def scrap():
         cleanup_application(load_config())
     except DeploymentError as e:
         click.echo(f"Cleanup error: {str(e)}", err=True)
+        sys.exit(1)
+
+@cli.command()
+def secure():
+    """Enable HTTPS (ACM + Route53) on your EB environment."""
+    config = load_config()
+    session = boto3.Session(region_name=config['aws']['region'])
+    acm_client = session.client('acm')
+    try:
+        chosen_cert = pick_certificate(acm_client)
+        enable_https(config, chosen_cert)
+    except DeploymentError as e:
+        click.echo(f"Security error: {str(e)}", err=True)
         sys.exit(1)
 
 if __name__ == '__main__':
