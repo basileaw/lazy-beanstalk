@@ -1,58 +1,37 @@
 #!/usr/bin/env python3
 """
 Elastic Beanstalk deployment management script.
-Handles deployment and cleanup of EB environments with associated AWS resources.
 """
 
-import os
-import sys
 from pathlib import Path
+import sys
 import click
 import yaml
-import boto3
-from typing import Dict, Any
+from typing import Dict
 
-# Add the deployment directory to the Python path
-DEPLOYMENT_DIR = Path(__file__).parent
-sys.path.append(str(DEPLOYMENT_DIR))
-
+sys.path.append(str(Path(__file__).parent))
 from modules.ship import deploy_application
 from modules.scrap import cleanup_application
+from modules.common import DeploymentError
 
-def load_config() -> Dict[Any, Any]:
-    """Load configuration from YAML file."""
-    config_path = DEPLOYMENT_DIR / "configurations" / "config.yaml"
+def load_config() -> Dict:
+    """Load and validate configuration."""
     try:
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        click.echo(f"Error: Configuration file not found at {config_path}", err=True)
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        click.echo(f"Error: Invalid YAML in configuration file: {e}", err=True)
-        sys.exit(1)
-
-def validate_config(config: Dict[Any, Any]) -> None:
-    """Validate the loaded configuration."""
-    required_sections = ['aws', 'application', 'instance', 'iam']
-    required_fields = {
-        'aws': ['region', 'platform'],
-        'application': ['name', 'environment'],
-        'instance': ['type', 'elb_type'],
-        'iam': ['service_role_name', 'instance_role_name', 'instance_profile_name']
-    }
-
-    # Check for required sections
-    for section in required_sections:
-        if section not in config:
-            click.echo(f"Error: Missing required section '{section}' in config", err=True)
-            sys.exit(1)
+        config = yaml.safe_load((Path(__file__).parent / "configurations" / "config.yaml").read_text())
+        required = {
+            'aws': ['region', 'platform'],
+            'application': ['name', 'environment'],
+            'instance': ['type', 'elb_type', 'autoscaling'],
+            'iam': ['service_role_name', 'instance_role_name', 'instance_profile_name']
+        }
         
-        # Check for required fields in each section
-        for field in required_fields[section]:
-            if field not in config[section]:
-                click.echo(f"Error: Missing required field '{field}' in '{section}' section", err=True)
-                sys.exit(1)
+        for section, fields in required.items():
+            if not all(field in config.get(section, {}) for field in fields):
+                raise ValueError(f"Missing required fields in {section} section")
+        return config
+    except Exception as e:
+        click.echo(f"Configuration error: {str(e)}", err=True)
+        sys.exit(1)
 
 @click.group()
 def cli():
@@ -61,24 +40,20 @@ def cli():
 
 @cli.command()
 def ship():
-    """Deploy the application to Elastic Beanstalk."""
+    """Deploy the application."""
     try:
-        config = load_config()
-        validate_config(config)
-        deploy_application(config)
-    except Exception as e:
-        click.echo(f"Error during deployment: {str(e)}", err=True)
+        deploy_application(load_config())
+    except DeploymentError as e:
+        click.echo(f"Deployment error: {str(e)}", err=True)
         sys.exit(1)
 
 @cli.command()
 def scrap():
-    """Clean up the Elastic Beanstalk environment and associated resources."""
+    """Clean up all resources."""
     try:
-        config = load_config()
-        validate_config(config)
-        cleanup_application(config)
-    except Exception as e:
-        click.echo(f"Error during cleanup: {str(e)}", err=True)
+        cleanup_application(load_config())
+    except DeploymentError as e:
+        click.echo(f"Cleanup error: {str(e)}", err=True)
         sys.exit(1)
 
 if __name__ == '__main__':
