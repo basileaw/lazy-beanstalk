@@ -2,41 +2,18 @@
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
 """
 
-import json
 import os
 import tempfile
 import zipfile
 import time
 from datetime import datetime
-from functools import wraps
 from pathlib import Path
-from typing import Dict, Any, Set, Optional
+from typing import Dict, Any, Set
 import boto3
 import yaml
 from botocore.exceptions import ClientError
 
-class DeployError(Exception):
-    """Custom exception for deployment errors."""
-    pass
-
-def aws_handler(func):
-    """Handle AWS API calls and provide meaningful errors."""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code not in ['NoSuchEntity', 'NoSuchBucket']:
-                raise DeployError(f"AWS {error_code}: {e.response['Error']['Message']}")
-    return wrapper
-
-def load_json_file(filename: str) -> Dict:
-    """Load and parse a JSON file from the policies directory."""
-    try:
-        return json.loads((Path(__file__).parent.parent / 'policies' / filename).read_text())
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        raise DeployError(f"Failed to load {filename}: {str(e)}")
+from . import common
 
 def create_app_bundle() -> str:
     """Create a ZIP archive of application files based on .ebignore."""
@@ -54,58 +31,17 @@ def create_app_bundle() -> str:
                     zipf.write(path, path.relative_to(project_root))
     return str(bundle_path)
 
-@aws_handler
-def setup_iam_role(iam_client, role_name: str, policies_config: Dict) -> None:
-    """Create or update an IAM role with specified policies."""
-    try:
-        iam_client.get_role(RoleName=role_name)
-        return
-    except ClientError as e:
-        if e.response['Error']['Code'] != 'NoSuchEntity':
-            raise
-
-    # Create role with trust policy from config
-    iam_client.create_role(
-        RoleName=role_name,
-        AssumeRolePolicyDocument=json.dumps(load_json_file(policies_config['trust_policy']))
-    )
-
-    # Attach managed policies
-    for arn in policies_config.get('managed_policies', []):
-        iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
-
-    # Create and attach custom policies
-    account_id = boto3.client('sts').get_caller_identity()['Account']
-    for policy_file in policies_config.get('custom_policies', []):
-        policy_name = f"{role_name}-{policy_file.replace('.json', '')}"
-        policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
-        
-        try:
-            response = iam_client.create_policy(
-                PolicyName=policy_name,
-                PolicyDocument=json.dumps(load_json_file(policy_file))
-            )
-            policy_arn = response['Policy']['Arn']
-        except ClientError as e:
-            if e.response['Error']['Code'] != 'EntityAlreadyExists':
-                raise
-        
-        iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
-
-    iam_client.get_waiter('role_exists').wait(RoleName=role_name)
-
-@aws_handler
+@common.aws_handler
 def ensure_instance_profile(iam_client, config: Dict[str, Any]) -> None:
     """Set up instance profile and its associated role."""
     profile_name = config['iam']['instance_profile_name']
     role_name = config['iam']['instance_role_name']
     
-    # Set up the role first using policies from config
-    setup_iam_role(iam_client, role_name, config['iam']['instance_role_policies'])
+    # Set up the role first
+    common.handle_iam_role(iam_client, role_name, config['iam']['instance_role_policies'])
     
-    # Create or update instance profile
-    profile_exists = True
     try:
+        iam_client.get_instance_profile(InstanceProfileName=profile_name)
         profile = iam_client.get_instance_profile(InstanceProfileName=profile_name)
         # Check if role is attached
         roles = profile['InstanceProfile'].get('Roles', [])
@@ -123,53 +59,14 @@ def ensure_instance_profile(iam_client, config: Dict[str, Any]) -> None:
             )
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchEntity':
-            profile_exists = False
             iam_client.create_instance_profile(InstanceProfileName=profile_name)
             iam_client.add_role_to_instance_profile(
                 InstanceProfileName=profile_name,
                 RoleName=role_name
             )
+            time.sleep(10)  # Allow time for profile propagation
         else:
             raise
-    
-    # Allow time for profile/role association to propagate
-    if not profile_exists:
-        time.sleep(10)
-
-def log_events(eb_client, env_name: str, last_event_time: Optional[datetime], seen_events: Set[str]) -> datetime:
-    """Get and log new environment events."""
-    kwargs = {'EnvironmentName': env_name, 'MaxRecords': 10}
-    if last_event_time:
-        kwargs['StartTime'] = last_event_time
-
-    for event in reversed(eb_client.describe_events(**kwargs).get('Events', [])):
-        event_key = f"{event['EventDate'].isoformat()}-{event['Message']}"
-        if event_key not in seen_events:
-            print(f"{event['EventDate']:%Y-%m-%d %H:%M:%S} {event['Severity']}: {event['Message']}")
-            seen_events.add(event_key)
-            last_event_time = event['EventDate']
-    
-    return last_event_time
-
-def wait_for_env(eb_client, env_name: str, target_status: str) -> None:
-    """Wait for environment to reach target status."""
-    print(f"Waiting for environment to be {target_status}...")
-    last_event_time = None
-    seen_events = set()
-    
-    while True:
-        envs = eb_client.describe_environments(
-            EnvironmentNames=[env_name],
-            IncludeDeleted=False
-        )['Environments']
-        
-        if not envs:
-            raise DeployError(f"Environment {env_name} not found")
-        
-        last_event_time = log_events(eb_client, env_name, last_event_time, seen_events)
-        if envs[0]['Status'] == target_status:
-            break
-        time.sleep(5)
 
 def wait_for_version(eb_client, app_name: str, version: str) -> None:
     """Wait for application version to be processed."""
@@ -181,7 +78,7 @@ def wait_for_version(eb_client, app_name: str, version: str) -> None:
         )['ApplicationVersions']
         
         if not versions:
-            raise DeployError(f"Version {version} not found")
+            raise common.DeploymentError(f"Version {version} not found")
         
         status = versions[0]['Status']
         print(f"Version status: {status}")
@@ -189,7 +86,7 @@ def wait_for_version(eb_client, app_name: str, version: str) -> None:
         if status == 'PROCESSED':
             break
         elif status == 'FAILED':
-            raise DeployError(f"Version {version} processing failed")
+            raise common.DeploymentError(f"Version {version} processing failed")
         time.sleep(5)
 
 def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> None:
@@ -200,23 +97,7 @@ def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> Non
         IncludeDeleted=False
     )['Environments'])
     
-    settings = [
-        {'Namespace': 'aws:autoscaling:launchconfiguration',
-         'OptionName': 'IamInstanceProfile',
-         'Value': config['iam']['instance_profile_name']},
-        {'Namespace': 'aws:elasticbeanstalk:environment',
-         'OptionName': 'ServiceRole',
-         'Value': config['iam']['service_role_name']},
-        {'Namespace': 'aws:autoscaling:launchconfiguration',
-         'OptionName': 'InstanceType',
-         'Value': config['instance']['type']},
-        {'Namespace': 'aws:autoscaling:asg',
-         'OptionName': 'MinSize',
-         'Value': str(config['instance']['autoscaling']['min_instances'])},
-        {'Namespace': 'aws:autoscaling:asg',
-         'OptionName': 'MaxSize',
-         'Value': str(config['instance']['autoscaling']['max_instances'])}
-    ]
+    settings = common.get_environment_settings(config)
     
     if exists:
         eb_client.update_environment(
@@ -238,7 +119,7 @@ def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> Non
             OptionSettings=settings
         )
     
-    wait_for_env(eb_client, env_name, 'Ready')
+    common.wait_for_environment(eb_client, env_name, 'Ready')
 
 def deploy_application(config: Dict[str, Any]) -> None:
     """Deploy the application to Elastic Beanstalk."""
@@ -266,7 +147,7 @@ def deploy_application(config: Dict[str, Any]) -> None:
     }))
     
     # Set up IAM resources
-    setup_iam_role(
+    common.handle_iam_role(
         iam_client,
         config['iam']['service_role_name'],
         config['iam']['service_role_policies']
