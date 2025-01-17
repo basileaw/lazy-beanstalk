@@ -1,13 +1,14 @@
 """Clean up Elastic Beanstalk environment and associated resources."""
 
 import shutil
+import yaml
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 import boto3
 from botocore.exceptions import ClientError
-import yaml
 
 from . import common
+from .common import DeploymentError
 
 def get_project_name() -> str:
     """Retrieve the project name from the root folder."""
@@ -32,7 +33,7 @@ def load_config() -> Dict:
 
         return replace_placeholders(config)
     except Exception as e:
-        raise common.DeploymentError(f"Failed to load config: {e}")
+        raise DeploymentError(f"Failed to load config: {e}")
 
 def cleanup_local_config() -> None:
     """Remove local EB CLI configuration."""
@@ -42,66 +43,68 @@ def cleanup_local_config() -> None:
         print("Removed .elasticbeanstalk configuration directory")
 
 @common.aws_handler
-def cleanup_https(config: Dict) -> None:
-    """Clean up HTTPS listener and DNS record."""
-    session = boto3.Session(region_name=config['aws']['region'])
-    elbv2_client = session.client('elbv2')
-    route53_client = session.client('route53')
+def cleanup_https(eb_client, elbv2_client, r53_client, config: Dict, project_name: str) -> None:
+    """Clean up HTTPS listener and DNS record if they exist."""
+    env_name = config['application']['environment']
     
+    # Find load balancer first
+    lb_arn = common.find_environment_load_balancer(eb_client, elbv2_client, env_name)
+    if not lb_arn:
+        return
+
+    # Check if HTTPS is enabled
+    is_https_enabled, cert_arn = common.get_https_status(elbv2_client, lb_arn, project_name)
+    if not is_https_enabled:
+        return
+
+    print("Found HTTPS configuration, cleaning up...")
+    
+    # Clean up HTTPS listener
     try:
-        # Find and remove DNS record first (don't rely on load balancer existing)
-        domain = f"{config['application']['name']}.basileaw.people.aws.dev"
-        zones = route53_client.list_hosted_zones()['HostedZones']
+        listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+        https_listener = next((l for l in listeners if l['Port'] == 443), None)
+        if https_listener:
+            print("Removing HTTPS listener")
+            elbv2_client.delete_listener(ListenerArn=https_listener['ListenerArn'])
+    except ClientError as e:
+        if e.response['Error']['Code'] not in ['LoadBalancerNotFound', 'ListenerNotFound']:
+            raise
+
+    # Clean up DNS record
+    try:
+        if cert_arn:  # Only proceed if we have a certificate ARN
+            # Get the domain from the certificate
+            acm_client = boto3.client('acm')
+            cert = acm_client.describe_certificate(CertificateArn=cert_arn)['Certificate']
+            domain = cert['DomainName'].replace('*', project_name)
+            
+            # Get the load balancer DNS name
+            lb = elbv2_client.describe_load_balancers(LoadBalancerArns=[lb_arn])['LoadBalancers'][0]
+        zones = r53_client.list_hosted_zones()['HostedZones']
         zone = next((z for z in zones if domain.endswith(z['Name'].rstrip('.'))), None)
         
         if zone:
-            try:
-                # First get the existing record
-                records = route53_client.list_resource_record_sets(
-                    HostedZoneId=zone['Id'],
-                    StartRecordName=domain,
-                    StartRecordType='CNAME',
-                    MaxItems='1'
-                )['ResourceRecordSets']
-                
-                record = next((r for r in records if r['Name'] == f"{domain}."), None)
-                if record:
-                    print(f"Removing DNS record for {domain}")
-                    route53_client.change_resource_record_sets(
-                        HostedZoneId=zone['Id'],
-                        ChangeBatch={
-                            'Changes': [{
-                                'Action': 'DELETE',
-                                'ResourceRecordSet': record
-                            }]
-                        }
-                    )
-            except ClientError as e:
-                if e.response['Error']['Code'] != 'InvalidChangeBatch':
-                    raise
-
-        # Find and remove HTTPS listener if load balancer still exists
-        env_name = config['application']['environment']
-        load_balancers = elbv2_client.describe_load_balancers()['LoadBalancers']
-        
-        lb_arn = None
-        for lb in load_balancers:
-            if lb['Type'].lower() == 'application':
-                tags = elbv2_client.describe_tags(ResourceArns=[lb['LoadBalancerArn']])['TagDescriptions'][0]['Tags']
-                if any(t['Key'] == 'elasticbeanstalk:environment-name' and t['Value'] == env_name for t in tags):
-                    lb_arn = lb['LoadBalancerArn']
-                    break
-
-        if lb_arn:
-            listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
-            https_listener = next((l for l in listeners if l['Port'] == 443), None)
+            records = r53_client.list_resource_record_sets(
+                HostedZoneId=zone['Id'],
+                StartRecordName=domain,
+                StartRecordType='CNAME',
+                MaxItems='1'
+            )['ResourceRecordSets']
             
-            if https_listener:
-                print("Removing HTTPS listener")
-                elbv2_client.delete_listener(ListenerArn=https_listener['ListenerArn'])
-
+            record = next((r for r in records if r['Name'] == f"{domain}."), None)
+            if record and record['ResourceRecords'][0]['Value'] == lb['DNSName']:
+                print(f"Removing DNS record for {domain}")
+                r53_client.change_resource_record_sets(
+                    HostedZoneId=zone['Id'],
+                    ChangeBatch={
+                        'Changes': [{
+                            'Action': 'DELETE',
+                            'ResourceRecordSet': record
+                        }]
+                    }
+                )
     except ClientError as e:
-        if e.response['Error']['Code'] not in ['LoadBalancerNotFound', 'ListenerNotFound']:
+        if e.response['Error']['Code'] not in ['LoadBalancerNotFound', 'NoSuchHostedZone']:
             raise
 
 @common.aws_handler
@@ -156,12 +159,15 @@ def cleanup_s3_bucket(s3_client, config: Dict) -> None:
 
 def cleanup_application(config: Dict) -> None:
     """Clean up all Elastic Beanstalk resources."""
+    project_name = get_project_name()
     session = boto3.Session(region_name=config['aws']['region'])
     eb_client = session.client('elasticbeanstalk')
+    elbv2_client = session.client('elbv2')
+    r53_client = session.client('route53')
     env_name = config['application']['environment']
 
-    # Clean up HTTPS resources first
-    cleanup_https(config)
+    # Clean up HTTPS resources first if they exist
+    cleanup_https(eb_client, elbv2_client, r53_client, config, project_name)
 
     # Terminate environment if it exists
     try:

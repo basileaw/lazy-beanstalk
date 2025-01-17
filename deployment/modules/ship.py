@@ -1,4 +1,3 @@
-# ship.py
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
 """
@@ -9,12 +8,17 @@ import zipfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Set
+from typing import Dict, Any, Set, Optional, Tuple
 import boto3
 import yaml
 from botocore.exceptions import ClientError
 
 from . import common
+from .common import DeploymentError
+
+def get_project_name() -> str:
+    """Return the name of the root-level folder (project)."""
+    return Path(__file__).parent.parent.parent.name
 
 def create_app_bundle() -> str:
     """Create a ZIP archive of application files based on .ebignore."""
@@ -79,7 +83,7 @@ def wait_for_version(eb_client, app_name: str, version: str) -> None:
         )['ApplicationVersions']
         
         if not versions:
-            raise common.DeploymentError(f"Version {version} not found")
+            raise DeploymentError(f"Version {version} not found")
         
         status = versions[0]['Status']
         print(f"Version status: {status}")
@@ -87,26 +91,80 @@ def wait_for_version(eb_client, app_name: str, version: str) -> None:
         if status == 'PROCESSED':
             break
         elif status == 'FAILED':
-            raise common.DeploymentError(f"Version {version} processing failed")
+            raise DeploymentError(f"Version {version} processing failed")
         time.sleep(5)
 
-def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> None:
+@common.aws_handler
+def preserve_env_state(eb_client, elbv2_client, env_name: str, project_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Preserve environment state before update, including HTTPS configuration.
+    
+    Args:
+        eb_client: Elastic Beanstalk client
+        elbv2_client: ELBv2 client
+        env_name: Environment name
+        project_name: Project name for tag prefix
+    
+    Returns:
+        Dictionary containing state to preserve, or None if no state to preserve
+    """
+    lb_arn = common.find_environment_load_balancer(eb_client, elbv2_client, env_name)
+    if not lb_arn:
+        return None
+
+    https_config = common.preserve_https_config(elbv2_client, lb_arn, project_name)
+    if not https_config:
+        return None
+
+    return {
+        'https_config': https_config,
+        'load_balancer_arn': lb_arn
+    }
+
+def restore_env_state(elbv2_client, state: Dict[str, Any], project_name: str) -> None:
+    """
+    Restore environment state after update, including HTTPS configuration.
+    
+    Args:
+        elbv2_client: ELBv2 client
+        state: State dictionary from preserve_env_state
+        project_name: Project name for tag prefix
+    """
+    if not state:
+        return
+
+    if 'https_config' in state and state['https_config']:
+        print("Restoring HTTPS configuration...")
+        common.restore_https_config(
+            elbv2_client,
+            state['load_balancer_arn'],
+            state['https_config'],
+            project_name
+        )
+
+def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], version: str, project_name: str) -> None:
     """Create or update Elastic Beanstalk environment."""
     env_name = config['application']['environment']
-    exists = bool(eb_client.describe_environments(
+    env_exists = bool(eb_client.describe_environments(
         EnvironmentNames=[env_name],
         IncludeDeleted=False
     )['Environments'])
     
     settings = common.get_env_settings(config)
+    state = None
     
-    if exists:
+    if env_exists:
+        print("Updating existing environment...")
+        # Preserve state before update
+        state = preserve_env_state(eb_client, elbv2_client, env_name, project_name)
+        
         eb_client.update_environment(
             EnvironmentName=env_name,
             VersionLabel=version,
             OptionSettings=settings
         )
     else:
+        print("Creating new environment...")
         settings.append({
             'Namespace': 'aws:elasticbeanstalk:environment',
             'OptionName': 'LoadBalancerType',
@@ -121,21 +179,25 @@ def create_or_update_env(eb_client, config: Dict[str, Any], version: str) -> Non
         )
     
     common.wait_for_env_status(eb_client, env_name, 'Ready')
+    
+    if state:
+        restore_env_state(elbv2_client, state, project_name)
 
 def deploy_application(config: Dict[str, Any]) -> None:
     """Deploy the application to Elastic Beanstalk."""
+    project_name = get_project_name()
     session = boto3.Session(region_name=config['aws']['region'])
     eb_client = session.client('elasticbeanstalk')
     iam_client = session.client('iam')
     s3_client = session.client('s3')
+    elbv2_client = session.client('elbv2')
     
-    # Create EB CLI config (UPDATED TO MATCH eb init STRUCTURE)
+    # Create EB CLI config
     eb_dir = Path(__file__).parent.parent.parent / '.elasticbeanstalk'
     eb_dir.mkdir(exist_ok=True)
     
     (eb_dir / 'config.yml').write_text(yaml.safe_dump({
         'branch-defaults': {
-            # 'main' is the typical default branch in modern Git; adjust if yours is different
             'main': {
                 'environment': config['application']['environment'],
                 'group_suffix': None
@@ -145,7 +207,6 @@ def deploy_application(config: Dict[str, Any]) -> None:
             'application_name': config['application']['name'],
             'branch': None,
             'default_ec2_keyname': None,
-            # Use the exact string that eb init might produce for Docker on AL2023
             'default_platform': 'Docker running on 64bit Amazon Linux 2023',
             'default_region': config['aws']['region'],
             'include_git_submodules': True,
@@ -202,4 +263,4 @@ def deploy_application(config: Dict[str, Any]) -> None:
     )
     
     wait_for_version(eb_client, app_name, version)
-    create_or_update_env(eb_client, config, version)
+    create_or_update_env(eb_client, elbv2_client, config, version, project_name)

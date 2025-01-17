@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Dict, Set, Optional, List, Callable
+from typing import Dict, Set, Optional, List, Callable, Tuple, Any
 import boto3
 from botocore.exceptions import ClientError
 
@@ -178,3 +178,170 @@ def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'c
         except ClientError as e:
             if e.response['Error']['Code'] != 'NoSuchEntity':
                 raise
+
+# New HTTPS Management Functions
+
+def get_resource_prefix(project_name: str) -> str:
+    """Generate consistent prefix for resource tags."""
+    return f"{project_name}:https"
+
+@aws_handler
+def get_https_status(elbv2_client, lb_arn: str, project_name: str) -> Tuple[bool, Optional[str]]:
+    """
+    Check if HTTPS is enabled and return status + certificate ARN.
+    
+    Args:
+        elbv2_client: AWS elbv2 client
+        lb_arn: Load balancer ARN
+        project_name: Project name for tag prefix
+    
+    Returns:
+        Tuple of (is_https_enabled, certificate_arn)
+    """
+    # Check load balancer tags
+    tags = elbv2_client.describe_tags(
+        ResourceArns=[lb_arn]
+    )['TagDescriptions'][0]['Tags']
+    
+    prefix = get_resource_prefix(project_name)
+    is_enabled = any(t['Key'] == f"{prefix}:enabled" and t['Value'].lower() == 'true' for t in tags)
+    cert_arn = next((t['Value'] for t in tags if t['Key'] == f"{prefix}:certificate-arn"), None)
+    
+    return is_enabled, cert_arn
+
+@aws_handler
+def find_environment_load_balancer(eb_client, elbv2_client, env_name: str) -> Optional[str]:
+    """
+    Find the ALB ARN for an environment.
+    
+    Args:
+        eb_client: AWS elastic beanstalk client
+        elbv2_client: AWS elbv2 client
+        env_name: Environment name
+    
+    Returns:
+        Load balancer ARN if found, None otherwise
+    """
+    env = eb_client.describe_environments(
+        EnvironmentNames=[env_name],
+        IncludeDeleted=False
+    )['Environments'][0]
+    
+    lbs = elbv2_client.describe_load_balancers()['LoadBalancers']
+    for lb in lbs:
+        if lb['Type'].lower() == 'application':
+            tags = elbv2_client.describe_tags(
+                ResourceArns=[lb['LoadBalancerArn']]
+            )['TagDescriptions'][0]['Tags']
+            
+            if any(t['Key'] == 'elasticbeanstalk:environment-name' and 
+                  t['Value'] == env_name for t in tags):
+                return lb['LoadBalancerArn']
+    
+    return None
+
+@aws_handler
+def preserve_https_config(elbv2_client, lb_arn: str, project_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Capture existing HTTPS configuration for preservation.
+    
+    Args:
+        elbv2_client: AWS elbv2 client
+        lb_arn: Load balancer ARN
+        project_name: Project name for tag prefix
+    
+    Returns:
+        Dict containing HTTPS configuration if enabled, None otherwise
+    """
+    is_enabled, cert_arn = get_https_status(elbv2_client, lb_arn, project_name)
+    if not is_enabled:
+        return None
+        
+    listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+    https_listener = next((l for l in listeners if l['Port'] == 443), None)
+    
+    if not https_listener:
+        return None
+        
+    return {
+        'certificate_arn': cert_arn,
+        'ssl_policy': https_listener['SslPolicy'],
+        'default_actions': https_listener['DefaultActions']
+    }
+
+@aws_handler
+def setup_https_listener(
+    elbv2_client, 
+    lb_arn: str, 
+    cert_arn: str, 
+    project_name: str,
+    ssl_policy: str = 'ELBSecurityPolicy-2016-08'
+) -> None:
+    """
+    Create or update HTTPS listener with proper configuration.
+    
+    Args:
+        elbv2_client: AWS elbv2 client
+        lb_arn: Load balancer ARN
+        cert_arn: Certificate ARN
+        project_name: Project name for tag prefix
+        ssl_policy: SSL policy name
+    """
+    # Get HTTP listener for default actions
+    listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+    http_listener = next((l for l in listeners if l['Port'] == 80), None)
+    if not http_listener:
+        raise DeploymentError("No HTTP listener found")
+    
+    # Check if HTTPS listener exists
+    https_listener = next((l for l in listeners if l['Port'] == 443), None)
+    
+    if https_listener:
+        # Update existing listener
+        elbv2_client.modify_listener(
+            ListenerArn=https_listener['ListenerArn'],
+            Certificates=[{'CertificateArn': cert_arn}],
+            SslPolicy=ssl_policy
+        )
+    else:
+        # Create new listener
+        elbv2_client.create_listener(
+            LoadBalancerArn=lb_arn,
+            Protocol='HTTPS',
+            Port=443,
+            Certificates=[{'CertificateArn': cert_arn}],
+            SslPolicy=ssl_policy,
+            DefaultActions=http_listener['DefaultActions']
+        )
+    
+    # Update tags
+    prefix = get_resource_prefix(project_name)
+    elbv2_client.add_tags(
+        ResourceArns=[lb_arn],
+        Tags=[
+            {'Key': f"{prefix}:enabled", 'Value': 'true'},
+            {'Key': f"{prefix}:certificate-arn", 'Value': cert_arn}
+        ]
+    )
+
+@aws_handler
+def restore_https_config(elbv2_client, lb_arn: str, config: Dict[str, Any], project_name: str) -> None:
+    """
+    Restore HTTPS configuration after environment update.
+    
+    Args:
+        elbv2_client: AWS elbv2 client
+        lb_arn: Load balancer ARN
+        config: HTTPS configuration dict from preserve_https_config
+        project_name: Project name for tag prefix
+    """
+    if not config:
+        return
+        
+    setup_https_listener(
+        elbv2_client,
+        lb_arn,
+        config['certificate_arn'],
+        project_name,
+        config['ssl_policy']
+    )
