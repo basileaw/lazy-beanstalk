@@ -1,3 +1,4 @@
+# ship.py
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
 """
@@ -128,23 +129,35 @@ def deploy_application(config: Dict[str, Any]) -> None:
     iam_client = session.client('iam')
     s3_client = session.client('s3')
     
-    # Create EB CLI config
+    # Create EB CLI config (UPDATED TO MATCH eb init STRUCTURE)
     eb_dir = Path(__file__).parent.parent.parent / '.elasticbeanstalk'
     eb_dir.mkdir(exist_ok=True)
+    
     (eb_dir / 'config.yml').write_text(yaml.safe_dump({
-        'branch-defaults': {'default': {'environment': config['application']['environment']}},
+        'branch-defaults': {
+            # 'main' is the typical default branch in modern Git; adjust if yours is different
+            'main': {
+                'environment': config['application']['environment'],
+                'group_suffix': None
+            }
+        },
         'global': {
             'application_name': config['application']['name'],
-            'default_platform': config['aws']['platform'],
+            'branch': None,
+            'default_ec2_keyname': None,
+            # Use the exact string that eb init might produce for Docker on AL2023
+            'default_platform': 'Docker running on 64bit Amazon Linux 2023',
             'default_region': config['aws']['region'],
             'include_git_submodules': True,
             'instance_profile': None,
             'platform_name': None,
             'platform_version': None,
+            'profile': None,
+            'repository': None,
             'sc': 'git',
             'workspace_type': 'Application'
         }
-    }))
+    }, sort_keys=True))
     
     # Set up IAM resources
     common.manage_iam_role(

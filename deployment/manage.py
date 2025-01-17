@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# manage.py 
 """
 Elastic Beanstalk deployment management script.
 """
@@ -17,7 +17,7 @@ from modules.common import DeploymentError
 def load_config() -> Dict:
     """Load and validate configuration."""
     try:
-        config = yaml.safe_load((Path(__file__).parent / "configurations" / "config.yaml").read_text())
+        config = yaml.safe_load((Path(__file__).parent / "configurations" / "config.yml").read_text())
         required = {
             'aws': ['region', 'platform'],
             'application': ['name', 'environment'],

@@ -16,7 +16,7 @@ from modules.common import aws_handler, DeploymentError
 
 def load_config() -> Dict:
     """Load configuration from YAML."""
-    config_path = Path(__file__).parent.parent / "configurations" / "config.yaml"
+    config_path = Path(__file__).parent.parent / "configurations" / "config.yml"
     try:
         return yaml.safe_load(config_path.read_text())
     except Exception as e:
