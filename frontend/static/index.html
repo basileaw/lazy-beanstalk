@@ -4,80 +4,56 @@
 <head>
     <title>Quote Guessing Game</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', path='favicon.ico') }}">
-
-    <!-- Main Application Styles -->
     <style>
-        /* Fluid scaling container with automatic min/max bounds */
         body {
+            opacity: 0;
+            transition: opacity 1s ease-in;
             margin: 0 auto;
             background: var(--bg-color);
-            padding: clamp(0.5rem, 2vw, 2rem);
+            padding: clamp(.5rem, 2vw, 2rem);
             width: clamp(300px, 90vw, 1200px);
             max-height: 90vh;
         }
 
-        /* Terminal iframe container */
+        body.visible {
+            opacity: 1;
+        }
+
         #terminal {
             width: 100%;
             height: 90vh;
-            border: none;
+            border: 0;
         }
     </style>
-
-    <!-- Terminal Style Injection Script -->
     <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            // Set theme background from server-side variable
+        document.addEventListener('DOMContentLoaded', () => {
             document.documentElement.style.setProperty('--bg-color', '{{background_color}}');
 
-            /**
-             * Injects styles into the terminal iframe to customize its appearance.
-             * Retries automatically if the iframe content isn't immediately available.
-             */
-            function applyTerminalStyles() {
-                const iframe = document.getElementById('terminal');
-                const iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
-
+            const injectStyles = () => {
                 try {
-                    const style = document.createElement('style');
-
-                    // Terminal style customizations
-                    // Note: !important flags are required to override ttyd's inline styles
-                    style.textContent = `
-                        /* Hide terminal scrollbar */
-                        .xterm-viewport {
-                            overflow: hidden !important;
-                        }
-                        
-                        /* Center terminal content using flexbox */
-                        .terminal.xterm {
-                            display: flex !important;
-                            justify-content: center !important;
-                            align-items: center !important;
-                        }
-
-                        /* Add additional terminal styles here */
-                    `;
-
-                    iframeDocument.head.appendChild(style);
-                } catch (e) {
-                    // Retry after a short delay if injection fails
-                    setTimeout(applyTerminalStyles, 100);
-                }
-            }
-
-            // Apply styles when iframe loads and several times afterward
-            // to ensure they persist through terminal initialization
-            document.getElementById('terminal').onload = function () {
-                const retryTimes = [0, 500, 1000, 2000];
-                retryTimes.forEach(delay => setTimeout(applyTerminalStyles, delay));
+                    const doc = document.getElementById('terminal').contentDocument;
+                    const style = doc.createElement('style');
+                    style.textContent = '.xterm-viewport{overflow:hidden!important}.terminal.xterm{display:flex!important;justify-content:center!important;align-items:center!important}';
+                    doc.head.appendChild(style);
+                    return true;
+                } catch { return false; }
             };
+
+            let attempts = 0;
+            const tryInject = () => {
+                if (injectStyles() || attempts++ > 19) {
+                    setTimeout(() => document.body.classList.add('visible'), 200);
+                } else {
+                    setTimeout(tryInject, 100);
+                }
+            };
+
+            document.getElementById('terminal').onload = tryInject;
         });
     </script>
 </head>
 
 <body>
-    <!-- Terminal iframe - src is provided by server -->
     <iframe id="terminal" src="{{ ttyd_path }}"></iframe>
 </body>
 
