@@ -64,7 +64,7 @@ if __name__ == '__main__':
     uvicorn_args = {
         "app": "server:app",
         "host": "0.0.0.0",
-        "port": int(os.getenv('PORT', '80' if is_container else '5000')),
+        "port": int(os.getenv('PORT', '80' if is_container else '8000')),
         **({"reload": True, "reload_dirs": ["./"]} if not is_container else {})
     }
 
