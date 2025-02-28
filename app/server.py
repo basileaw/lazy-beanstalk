@@ -1,4 +1,4 @@
-# backend/server.py
+# app/server.py
 import os
 import sys
 import signal

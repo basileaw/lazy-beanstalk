@@ -29,4 +29,4 @@ RUN pip install --no-cache-dir pipenv && \
 COPY . .
 
 EXPOSE 80
-CMD ["python", "backend/server.py"]
+CMD ["python", "app/server.py"]

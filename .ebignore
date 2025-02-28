@@ -6,7 +6,7 @@
 !.elasticbeanstalk
 !.ebignore
 !frontend/
-!backend/
+!app/
 !Dockerfile
 !.dockerignore
 !Pipfile

@@ -9,7 +9,7 @@
 
 ## Application Code 
 !frontend/
-!backend/
+!app/
 
 ## Pipenv 
 !Pipfile
