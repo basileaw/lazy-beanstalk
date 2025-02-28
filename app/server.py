@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Setup static files and proxy
-STATIC_DIR = Path(__file__).parent / "frontend" / "static"
+STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(STATIC_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 setup_proxy_routes(app, proxy_manager)

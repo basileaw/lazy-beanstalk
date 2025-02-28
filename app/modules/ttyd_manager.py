@@ -14,8 +14,8 @@ class TTYDManager:
         self.port = port
         self.theme = theme or {"background": "black"}
         self.process: Optional[subprocess.Popen] = None
-        # Calculate the path to frontend/main.py relative to this module
-        self.frontend_path = Path(__file__).parent.parent / "frontend" / "main.py"
+        # Calculate the path to frontend/client.py relative to this module
+        self.frontend_path = Path(__file__).parent.parent / "frontend" / "client.py"
 
     def start(self):
         """Start the ttyd process"""
