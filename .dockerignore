@@ -12,5 +12,5 @@
 !app/
 
 ## Pipenv 
-!Pipfile
-!Pipfile.lock
+!pyproject.toml
+!poetry.lock

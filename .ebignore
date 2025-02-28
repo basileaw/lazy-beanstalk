@@ -9,5 +9,5 @@
 !app/
 !Dockerfile
 !.dockerignore
-!Pipfile
-!Pipfile.lock
+!pyproject.toml
+!poetry.lock
