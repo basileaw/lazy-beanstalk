@@ -1,10 +1,11 @@
-# ttyd_manager.py 
+# app/modules/ttyd_manager.py
 
 import json
 import logging
 import subprocess
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 logger = logging.getLogger("uvicorn")
 
@@ -13,6 +14,8 @@ class TTYDManager:
         self.port = port
         self.theme = theme or {"background": "black"}
         self.process: Optional[subprocess.Popen] = None
+        # Calculate the path to frontend/main.py relative to this module
+        self.frontend_path = Path(__file__).parent.parent / "frontend" / "main.py"
 
     def start(self):
         """Start the ttyd process"""
@@ -27,7 +30,7 @@ class TTYDManager:
              '-t', 'cursorBlink=true',
              '-t', f'theme={json.dumps(self.theme)}',
              'python',
-             'frontend/main.py'],
+             str(self.frontend_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )

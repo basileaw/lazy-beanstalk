@@ -8,7 +8,6 @@
 !Dockerfile
 
 ## Application Code 
-!frontend/
 !app/
 
 ## Pipenv 
