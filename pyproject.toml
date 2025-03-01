@@ -1,8 +1,6 @@
 [tool.poetry]
-name = "your-project-name"
-version = "0.1.0"
-description = ""
-authors = ["Your Name <your.email@example.com>"]
+name = "lazy-beanstalk"
+authors = ["Alex Basile <basileaw@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -14,6 +12,8 @@ requests = ">=2.32.3"
 httpx = "*"
 rich = "*"
 websockets = "*"
+terminaide = "^0.0.1"
+chatline = "^0.0.5"
 
 [tool.poetry.group.dev.dependencies]
 pyyaml = "*"

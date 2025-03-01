@@ -1,75 +1,62 @@
-# app/server.py
-import os
-import sys
-import signal
-import uvicorn
+# example/server.py
+
+"""
+Test server demonstrating terminaide integration with root mounting.
+This server serves a quote guessing game through a browser-based terminal.
+"""
+
 import logging
-from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from modules.ttyd_manager import TTYDManager
-from modules.proxy import ProxyManager, setup_proxy_routes
+from fastapi import FastAPI
+from terminaide import serve_tty
 
-logger = logging.getLogger("uvicorn")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:     %(name)s - %(message)s'
+)
 
-# Initialize app and managers
-ttyd_manager = TTYDManager()
-proxy_manager = ProxyManager("127.0.0.1", 7681)
+logger = logging.getLogger(__name__)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with ttyd_manager.lifespan(app):
-        try:
-            yield
-        finally:
-            await proxy_manager.cleanup()
+# Initialize FastAPI application
+app = FastAPI(
+    title="Quote Guessing Game",
+    description="A terminal-based game served through terminaide"
+)
 
-app = FastAPI(lifespan=lifespan)
+# Set up the terminal service at the root path
+client_script = Path(__file__).parent / "frontend" / "client.py"
 
-# Setup static files and proxy
-STATIC_DIR = Path(__file__).parent / "static"
-templates = Jinja2Templates(directory=str(STATIC_DIR))
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-setup_proxy_routes(app, proxy_manager)
+# Configure the terminal service
+serve_tty(
+    app,
+    client_script=client_script,
+    mount_path="/",
+    theme={
+        "background": "black",
+    },
+    ttyd_options={
+        "check_origin": False,
+        "max_clients": 1,
+    },
+    debug=True
+)
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "ttyd_running": ttyd_manager.is_running}
-
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    try:
-        host = request.headers.get('host', '').split(':')[0]
-        logger.info(f'Using host: {host}')
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "host": host,
-            "ttyd_path": "/ttyd/",
-            "background_color": ttyd_manager.theme["background"]
-        })
-    except Exception as e:
-        logger.error(f'Error in index route: {e}')
-        return str(e)
-
+# Start the server when running this file directly
 if __name__ == '__main__':
-    # Handle shutdown gracefully
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda s, f: (ttyd_manager.stop(), sys.exit(0)))
+    import uvicorn
     
-    # Configure server
-    is_container = os.getenv('IS_CONTAINER', 'false').lower() == 'true'
-    uvicorn_args = {
+    server_port = int('8000')
+    
+    uvicorn_config = {
         "app": "server:app",
         "host": "0.0.0.0",
-        "port": int(os.getenv('PORT', '80' if is_container else '8000')),
-        **({"reload": True, "reload_dirs": ["./"]} if not is_container else {})
+        "port": server_port,
+        "log_level": "info",
+        "reload": True,
+        "reload_dirs": ["./"]
     }
 
-    try:
-        logger.info(f"Starting server on port {uvicorn_args['port']}")
-        uvicorn.run(**uvicorn_args)
-    finally:
-        ttyd_manager.stop()
+    logger.info(f"Starting server on port {server_port}")
+    
+    uvicorn.run(**uvicorn_config)
