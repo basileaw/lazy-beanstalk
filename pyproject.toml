@@ -1,6 +1,9 @@
 [tool.poetry]
 name = "lazy-beanstalk"
 authors = ["Alex Basile <basileaw@gmail.com>"]
+version = "0.0.0"
+description = "A simple web app to deploy to AWS Elastic Beanstalk"
+
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -12,8 +15,8 @@ requests = ">=2.32.3"
 httpx = "*"
 rich = "*"
 websockets = "*"
-terminaide = "^0.0.1"
 chatline = "^0.0.5"
+terminaide = "^0.0.6"
 
 [tool.poetry.group.dev.dependencies]
 pyyaml = "*"
@@ -28,13 +31,10 @@ build-backend = "poetry.core.masonry.api"
 serve = "python app/server.py"
 serve-container = """
 sh -c 'DIR=${PWD##*/} && \
-docker buildx build --no-cache -t $DIR-web . && \
-docker rm -f $DIR-web 2>/dev/null || true && \
-docker run --name $DIR-web -p 80:80 -v ~/.aws:/root/.aws:ro $DIR-web'
+docker rm -f $DIR-web || true && \
+docker buildx build --force-rm=true --no-cache -t $DIR-web . && \
+docker run --rm --name $DIR-web -p 80:80 -v ~/.aws:/root/.aws:ro $DIR-web'
 """
 ship = "python deployment/manage.py ship"
 secure = "python deployment/manage.py secure"
 scrap = "python deployment/manage.py scrap"
-
-[tool.poetry.extras]
-system = ["ttyd"]
