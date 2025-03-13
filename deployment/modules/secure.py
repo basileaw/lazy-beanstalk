@@ -3,12 +3,10 @@ Secure your Elastic Beanstalk environment via HTTPS using ACM and Route 53.
 Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
 """
 
-import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 import boto3
-from botocore.exceptions import ClientError
 
 from . import common
 from .common import DeploymentError
@@ -65,21 +63,32 @@ def get_hosted_zone_id(r53_client, domain: str) -> str:
 @common.aws_handler
 def ensure_security_group_https(ec2_client, elbv2_client, lb_arn: str) -> None:
     """
-    Authorize inbound HTTPS if missing on the LB's security group.
+    Authorize inbound and outbound HTTPS if missing on the LB's security group.
     """
     lb = elbv2_client.describe_load_balancers(LoadBalancerArns=[lb_arn])['LoadBalancers'][0]
     
     for sg_id in lb['SecurityGroups']:
         sg = ec2_client.describe_security_groups(GroupIds=[sg_id])['SecurityGroups'][0]
-        has_https = any(
+        
+        # Check inbound HTTPS rule
+        has_inbound_https = any(
             p['IpProtocol'] == 'tcp' and 
             p.get('FromPort') == 443 and 
             p.get('ToPort') == 443
             for p in sg['IpPermissions']
         )
         
-        if not has_https:
-            print(f"Adding HTTPS (443) to security group {sg_id}")
+        # Check outbound HTTPS rule
+        has_outbound_https = any(
+            p['IpProtocol'] == 'tcp' and 
+            p.get('FromPort') == 443 and 
+            p.get('ToPort') == 443
+            for p in sg['IpPermissionsEgress']
+        )
+        
+        # Add inbound HTTPS if missing
+        if not has_inbound_https:
+            print(f"Adding inbound HTTPS (443) to security group {sg_id}")
             ec2_client.authorize_security_group_ingress(
                 GroupId=sg_id,
                 IpPermissions=[{
@@ -87,6 +96,19 @@ def ensure_security_group_https(ec2_client, elbv2_client, lb_arn: str) -> None:
                     'FromPort': 443,
                     'ToPort': 443,
                     'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from anywhere'}]
+                }]
+            )
+        
+        # Add outbound HTTPS if missing
+        if not has_outbound_https:
+            print(f"Adding outbound HTTPS (443) to security group {sg_id}")
+            ec2_client.authorize_security_group_egress(
+                GroupId=sg_id,
+                IpPermissions=[{
+                    'IpProtocol': 'tcp',
+                    'FromPort': 443,
+                    'ToPort': 443,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS to anywhere'}]
                 }]
             )
 
