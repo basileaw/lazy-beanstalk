@@ -16,7 +16,7 @@ httpx = "*"
 rich = "*"
 websockets = "*"
 chatline = "^0.0.5"
-terminaide = "^0.0.6"
+terminaide = {git = "https://github.com/anotherbazeinthewall/terminaide"}
 
 [tool.poetry.group.dev.dependencies]
 pyyaml = "*"
@@ -33,7 +33,7 @@ serve-container = """
 sh -c 'DIR=${PWD##*/} && \
 docker rm -f $DIR-web || true && \
 docker buildx build --force-rm=true --no-cache -t $DIR-web . && \
-docker run --rm --name $DIR-web -p 80:80 -v ~/.aws:/root/.aws:ro $DIR-web'
+docker run --rm --name $DIR-web -p 8000:8000 -v ~/.aws:/root/.aws:ro $DIR-web'
 """
 ship = "python deployment/manage.py ship"
 secure = "python deployment/manage.py secure"

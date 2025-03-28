@@ -1,12 +1,8 @@
 # app.py
 
-from fastapi import FastAPI
-from terminaide import serve_terminal
-import uvicorn
+from terminaide import serve_function
 
-app = FastAPI()
+def main():
+    print("world")
 
-serve_terminal(app)
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=80)
+serve_function(main, title="Hello", port=8000)

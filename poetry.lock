@@ -838,23 +838,31 @@ full = ["httpx (>=0.27.0,<0.29.0)", "itsdangerous", "jinja2", "python-multipart 
 
 [[package]]
 name = "terminaide"
-version = "0.0.6"
+version = "0.0.7"
 description = "Serve Python CLI applications in the browser using ttyd"
 optional = false
-python-versions = "<4.0,>=3.12"
-files = [
-    {file = "terminaide-0.0.6-py3-none-any.whl", hash = "sha256:0a082f6b9b6f740ae106c11fedd83943dad50bfb58d3b91fa23e3ff054b260f3"},
-    {file = "terminaide-0.0.6.tar.gz", hash = "sha256:8f9e692c5d62e7a25a3626575753a94e54cf923de090425752b5ab9aa97984f7"},
-]
+python-versions = "^3.12"
+files = []
+develop = false
 
 [package.dependencies]
+chatline = "^0.0.5"
 fastapi = ">=0.104.0"
 httpx = ">=0.25.0"
 jinja2 = ">=3.1.2"
 pydantic = ">=2.4.2"
-readchar = ">=4.2.1,<5.0.0"
+readchar = "^4.2.1"
 uvicorn = ">=0.24.0"
 websockets = ">=12.0"
+
+[package.extras]
+games = []
+
+[package.source]
+type = "git"
+url = "https://github.com/anotherbazeinthewall/terminaide"
+reference = "HEAD"
+resolved_reference = "52c137d1edd62803b9a43d6fcec1ad6f8316923f"
 
 [[package]]
 name = "typing-extensions"
@@ -994,4 +1002,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "eef03f323d596b054495d18e38cde761a4d91e6619a7da692771cd20019d23a0"
+content-hash = "53b47123e378538e154f1f1496be17bf279e6fcad44b7866c5e9b3c027372eeb"
