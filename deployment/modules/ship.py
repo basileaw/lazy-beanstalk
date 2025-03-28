@@ -1,3 +1,4 @@
+# modules/ship.py
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
 """
@@ -186,7 +187,13 @@ def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], versio
 def deploy_application(config: Dict[str, Any]) -> None:
     """Deploy the application to Elastic Beanstalk."""
     project_name = get_project_name()
-    session = boto3.Session(region_name=config['aws']['region'])
+    region = config['aws']['region']
+    platform = config['aws']['platform']
+    
+    print(f"Deploying to region: {region}")
+    print(f"Using platform: {platform}")
+    
+    session = boto3.Session(region_name=region)
     eb_client = session.client('elasticbeanstalk')
     iam_client = session.client('iam')
     s3_client = session.client('s3')
@@ -195,6 +202,27 @@ def deploy_application(config: Dict[str, Any]) -> None:
     # Create EB CLI config
     eb_dir = Path(__file__).parent.parent.parent / '.elasticbeanstalk'
     eb_dir.mkdir(exist_ok=True)
+    
+    # Get the platform name for the config file
+    # Extract the generic platform name from the full solution stack
+    platform_parts = platform.split(" ")
+    default_platform = "Docker"
+    
+    # Try to construct a more specific platform name based on the solution stack
+    if "Docker" in platform:
+        # Look for common patterns in platform names
+        if "Amazon Linux" in platform:
+            # Find the OS details (e.g., "64bit Amazon Linux 2023")
+            os_parts = []
+            for i, part in enumerate(platform_parts):
+                if part == "Amazon" and i+2 < len(platform_parts):
+                    os_parts = platform_parts[i-1:i+3]  # Get bits, Amazon, Linux, version
+                    break
+            
+            if os_parts:
+                default_platform = f"Docker running on {' '.join(os_parts)}"
+            else:
+                default_platform = "Docker"
     
     (eb_dir / 'config.yml').write_text(yaml.safe_dump({
         'branch-defaults': {
@@ -207,8 +235,8 @@ def deploy_application(config: Dict[str, Any]) -> None:
             'application_name': config['application']['name'],
             'branch': None,
             'default_ec2_keyname': None,
-            'default_platform': 'Docker running on 64bit Amazon Linux 2023',
-            'default_region': config['aws']['region'],
+            'default_platform': default_platform,
+            'default_region': region,
             'include_git_submodules': True,
             'instance_profile': None,
             'platform_name': None,
@@ -238,15 +266,17 @@ def deploy_application(config: Dict[str, Any]) -> None:
     
     # Create and upload application version
     version = f"v{datetime.now():%Y%m%d_%H%M%S}"
-    bucket = f"elasticbeanstalk-{config['aws']['region']}-{app_name.lower()}"
+    bucket = f"elasticbeanstalk-{region}-{app_name.lower()}"
     
     try:
         s3_client.head_bucket(Bucket=bucket)
     except ClientError:
-        s3_client.create_bucket(
-            Bucket=bucket,
-            CreateBucketConfiguration={'LocationConstraint': config['aws']['region']}
-        )
+        # For regions other than us-east-1, we need to specify the LocationConstraint
+        create_bucket_args = {'Bucket': bucket}
+        if region != 'us-east-1':
+            create_bucket_args['CreateBucketConfiguration'] = {'LocationConstraint': region}
+        
+        s3_client.create_bucket(**create_bucket_args)
     
     bundle = create_app_bundle()
     key = f"app-{version}.zip"
