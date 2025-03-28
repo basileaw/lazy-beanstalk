@@ -1,8 +1,16 @@
-# app.py
-
 from terminaide import serve_function
 
 def main():
-    print("world")
+    from chatline import Interface
 
-serve_function(main, title="Hello", port=8000)
+    # Initialize with embedded mode (uses AWS Bedrock)
+    chat = Interface()
+
+    # Add optional welcome message
+    chat.preface("Poo Poo", title="Pee Pee", border_color="green")
+
+    # Start the conversation
+    chat.start()
+
+if __name__ == "__main__":
+    serve_function(main)
