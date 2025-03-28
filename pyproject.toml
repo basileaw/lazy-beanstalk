@@ -15,8 +15,8 @@ requests = ">=2.32.3"
 httpx = "*"
 rich = "*"
 websockets = "*"
-chatline = "^0.0.5"
 terminaide = {git = "https://github.com/anotherbazeinthewall/terminaide"}
+chatline = {git = "https://github.com/anotherbazeinthewall/chatline-interface"}
 
 [tool.poetry.group.dev.dependencies]
 pyyaml = "*"

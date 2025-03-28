@@ -223,17 +223,21 @@ name = "chatline"
 version = "0.0.5"
 description = "A pretty command line interface for LLM chat."
 optional = false
-python-versions = "<4.0,>=3.12"
-files = [
-    {file = "chatline-0.0.5-py3-none-any.whl", hash = "sha256:0ad9783fbc616922118f4a8a77471ff66185c0439be63e25e62d2ce0db53989e"},
-    {file = "chatline-0.0.5.tar.gz", hash = "sha256:f779addfc2f3d05c310265b74e1f97bb9670a81bfbbaa6673e0a5cf55232173c"},
-]
+python-versions = ">=3.12,<4.0"
+files = []
+develop = false
 
 [package.dependencies]
 boto3 = "*"
 httpx = "*"
 prompt-toolkit = "*"
 rich = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/anotherbazeinthewall/chatline-interface"
+reference = "HEAD"
+resolved_reference = "0cb698920a16ede954d48d71ba8d83975743a609"
 
 [[package]]
 name = "click"
@@ -1002,4 +1006,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "53b47123e378538e154f1f1496be17bf279e6fcad44b7866c5e9b3c027372eeb"
+content-hash = "a648924cf7f06857c5560589599db1bd5b78a6c2f9ac33f82c9fdbb30791284b"

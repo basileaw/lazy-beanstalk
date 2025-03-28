@@ -7,8 +7,6 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-# No system dependencies needed
-
 # Install Poetry
 RUN pip install --no-cache-dir poetry
 
