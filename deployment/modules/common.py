@@ -1,13 +1,20 @@
+# modules/common.py
+
 """Common utilities for Elastic Beanstalk deployment operations."""
 
 import json
 import time
+import logging
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Dict, Set, Optional, List, Callable, Tuple, Any
 import boto3
 from botocore.exceptions import ClientError
+
+# Set up basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('deployment')
 
 class DeploymentError(Exception):
     """Base exception for deployment operations."""
@@ -22,14 +29,28 @@ def aws_handler(func: Callable) -> Callable:
         except ClientError as e:
             code = e.response['Error']['Code']
             if code not in ['NoSuchEntity', 'NoSuchBucket', 'NoSuchKey']:
-                raise DeploymentError(f"AWS {code}: {e.response['Error']['Message']}")
+                error_message = f"AWS {code}: {e.response['Error']['Message']}"
+                logger.error(error_message)
+                raise DeploymentError(error_message)
     return wrapper
 
 def load_policy(filename: str) -> Dict:
     """Load JSON policy file."""
     try:
-        return json.loads((Path(__file__).parent.parent / 'policies' / filename).read_text())
+        policy_path = Path(__file__).parent.parent / 'policies' / filename
+        if not policy_path.exists():
+            logger.error(f"Policy file not found: {policy_path}")
+            raise DeploymentError(f"Policy file not found: {policy_path}")
+            
+        policy_content = policy_path.read_text()
+        logger.debug(f"Loaded policy content from {filename}: {policy_content[:100]}...")
+        policy = json.loads(policy_content)
+        return policy
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in policy file {filename}: {e}")
+        raise DeploymentError(f"Failed to parse JSON in {filename}: {e}")
     except Exception as e:
+        logger.error(f"Failed to load {filename}: {e}")
         raise DeploymentError(f"Failed to load {filename}: {e}")
 
 def print_events(eb_client, env_name: str, after: Optional[datetime], seen: Set[str]) -> datetime:
@@ -118,66 +139,143 @@ def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'c
     """Create or clean up IAM role and policies."""
     if action == 'create':
         try:
+            logger.info(f"Checking if role {role_name} exists")
             iam_client.get_role(RoleName=role_name)
-            return
+            logger.info(f"Role {role_name} already exists, skipping creation")
         except ClientError as e:
             if e.response['Error']['Code'] != 'NoSuchEntity':
                 raise
 
-        # Create role
-        iam_client.create_role(
-            RoleName=role_name,
-            AssumeRolePolicyDocument=json.dumps(load_policy(policies['trust_policy']))
-        )
+            logger.info(f"Creating role {role_name}")
+            # Create role
+            iam_client.create_role(
+                RoleName=role_name,
+                AssumeRolePolicyDocument=json.dumps(load_policy(policies['trust_policy']))
+            )
+            logger.info(f"Role {role_name} created successfully")
 
-        # Attach policies
+        # Attach managed policies
         for arn in policies.get('managed_policies', []):
-            iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
+            logger.info(f"Attaching policy {arn} to role {role_name}")
+            try:
+                iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
+                logger.info(f"Policy {arn} attached to role {role_name}")
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchEntity':
+                    logger.error(f"Failed to attach policy {arn}: Policy not found")
+                else:
+                    raise
 
         # Handle custom policies
         account = boto3.client('sts').get_caller_identity()['Account']
         for policy_file in policies.get('custom_policies', []):
             name = f"{role_name}-{policy_file.replace('.json', '')}"
-            arn = f"arn:aws:iam::{account}:policy/{name}"
+            policy_arn = f"arn:aws:iam::{account}:policy/{name}"
             
+            # Load the policy document
+            logger.info(f"Loading policy from {policy_file}")
+            policy_doc = load_policy(policy_file)
+            
+            # Check if policy exists
+            policy_exists = False
             try:
-                policy = iam_client.create_policy(
-                    PolicyName=name,
-                    PolicyDocument=json.dumps(load_policy(policy_file))
-                )
-                arn = policy['Policy']['Arn']
+                response = iam_client.get_policy(PolicyArn=policy_arn)
+                policy_exists = True
+                logger.info(f"Policy {name} already exists with ARN: {policy_arn}")
             except ClientError as e:
-                if e.response['Error']['Code'] != 'EntityAlreadyExists':
+                if e.response['Error']['Code'] != 'NoSuchEntity':
+                    logger.error(f"Error checking policy existence: {e}")
                     raise
+                logger.info(f"Policy {name} does not exist, will create it")
             
-            iam_client.attach_role_policy(RoleName=role_name, PolicyArn=arn)
+            # Create policy if it doesn't exist
+            if not policy_exists:
+                try:
+                    logger.info(f"Creating policy {name} from {policy_file}")
+                    policy = iam_client.create_policy(
+                        PolicyName=name,
+                        PolicyDocument=json.dumps(policy_doc)
+                    )
+                    policy_arn = policy['Policy']['Arn']
+                    logger.info(f"Created policy {name} with ARN: {policy_arn}")
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'EntityAlreadyExists':
+                        logger.info(f"Policy {name} already exists, fetching ARN")
+                        # If the policy exists but we couldn't fetch it earlier,
+                        # try to list and find it
+                        try:
+                            policies_response = iam_client.list_policies(Scope='Local')
+                            matching_policy = next(
+                                (p for p in policies_response['Policies'] if p['PolicyName'] == name),
+                                None
+                            )
+                            if matching_policy:
+                                policy_arn = matching_policy['Arn']
+                                logger.info(f"Found existing policy {name} with ARN: {policy_arn}")
+                        except Exception as list_err:
+                            logger.error(f"Error listing policies: {list_err}")
+                    else:
+                        logger.error(f"Failed to create policy {name}: {e}")
+                        raise
+            
+            # Attach policy to role
+            try:
+                # Check if policy is already attached to avoid redundant operations
+                attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
+                is_attached = any(p['PolicyArn'] == policy_arn for p in attached_policies['AttachedPolicies'])
+                
+                if not is_attached:
+                    logger.info(f"Attaching policy {name} to role {role_name}")
+                    iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+                    logger.info(f"Attached policy {name} to role {role_name}")
+                else:
+                    logger.info(f"Policy {name} is already attached to role {role_name}")
+            except ClientError as e:
+                logger.error(f"Failed to attach policy {name} to role {role_name}: {e}")
+                raise
 
+        logger.info(f"Waiting for role {role_name} to be fully created and available")
         iam_client.get_waiter('role_exists').wait(RoleName=role_name)
+        logger.info(f"Role {role_name} is ready")
 
     elif action == 'cleanup':
+        logger.info(f"Cleaning up role {role_name}")
         # Detach and clean up policies
         account = boto3.client('sts').get_caller_identity()['Account']
         
         for arn in policies.get('managed_policies', []):
             try:
+                logger.info(f"Detaching policy {arn} from role {role_name}")
                 iam_client.detach_role_policy(RoleName=role_name, PolicyArn=arn)
-            except ClientError:
+                logger.info(f"Detached policy {arn} from role {role_name}")
+            except ClientError as e:
+                logger.warning(f"Error detaching policy {arn} from role {role_name}: {e}")
                 continue
 
         for policy_file in policies.get('custom_policies', []):
             try:
                 name = f"{role_name}-{policy_file.replace('.json', '')}"
-                arn = f"arn:aws:iam::{account}:policy/{name}"
-                iam_client.detach_role_policy(RoleName=role_name, PolicyArn=arn)
-                iam_client.delete_policy(PolicyArn=arn)
-            except ClientError:
+                policy_arn = f"arn:aws:iam::{account}:policy/{name}"
+                logger.info(f"Detaching and deleting policy {name}")
+                iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+                logger.info(f"Detached policy {name} from role {role_name}")
+                
+                # Delete the policy
+                iam_client.delete_policy(PolicyArn=policy_arn)
+                logger.info(f"Deleted policy {name}")
+            except ClientError as e:
+                logger.warning(f"Error cleaning up policy {policy_file}: {e}")
                 continue
 
         try:
+            logger.info(f"Deleting role {role_name}")
             iam_client.delete_role(RoleName=role_name)
+            logger.info(f"Deleted role {role_name}")
         except ClientError as e:
             if e.response['Error']['Code'] != 'NoSuchEntity':
+                logger.error(f"Error deleting role {role_name}: {e}")
                 raise
+            logger.info(f"Role {role_name} doesn't exist, skipping deletion")
 
 # New HTTPS Management Functions
 

@@ -237,7 +237,7 @@ rich = "*"
 type = "git"
 url = "https://github.com/anotherbazeinthewall/chatline-interface"
 reference = "HEAD"
-resolved_reference = "0cb698920a16ede954d48d71ba8d83975743a609"
+resolved_reference = "9b545f91aab6977564946349ed83aeac441d1d52"
 
 [[package]]
 name = "click"
