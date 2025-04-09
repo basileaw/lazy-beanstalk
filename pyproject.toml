@@ -4,7 +4,6 @@ authors = ["Alex Basile <basileaw@gmail.com>"]
 version = "0.0.0"
 description = "A simple web app to deploy to AWS Elastic Beanstalk"
 
-
 [tool.poetry.dependencies]
 python = "^3.12"
 fastapi = "*"
@@ -15,7 +14,7 @@ requests = ">=2.32.3"
 httpx = "*"
 rich = "*"
 websockets = "*"
-terminaide = {git = "https://github.com/anotherbazeinthewall/terminaide"}
+terminaide = "^0.1.1"
 chatline = {git = "https://github.com/anotherbazeinthewall/chatline-interface"}
 
 [tool.poetry.group.dev.dependencies]
@@ -28,7 +27,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poe.tasks]
-serve = "python app/server.py"
+serve = "python app/main.py"
 serve-container = """
 sh -c 'DIR=${PWD##*/} && \
 docker rm -f $DIR-web || true && \

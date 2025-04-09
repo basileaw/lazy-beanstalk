@@ -24,4 +24,4 @@ COPY app/ ./
 EXPOSE 8000
 
 # Start the application with unbuffered output
-ENTRYPOINT ["python", "-u", "server.py"]
+ENTRYPOINT ["python", "-u", "main.py"]

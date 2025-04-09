@@ -25,7 +25,7 @@ This template turns your terminal application into a web-accessible service. Use
    - Uses packages like `rich`, `curses`, or any terminal-based UI
    - Remains completely unchanged - we don't modify your code
 
-2. **Web Interface (`server.py`)**
+2. **Web Interface (`main.py`)**
    - A simple Fast API server that creates a web gateway
    - Embeds your terminal in a browser window
    - Handles all the web-terminal communication
@@ -95,7 +95,7 @@ This:
 ## Project Structure Explained
 
 - `client.py` - Your original terminal application
-- `server.py` - Web interface (you don't need to modify this)
+- `main.py` - Web interface (you don't need to modify this)
 - `start.sh` - Runs both services (terminal + web)
 - `Dockerfile` - Container configuration
 - `docker-compose.yml` - Local development setup
