@@ -16,7 +16,7 @@ httpx = "*"
 rich = "*"
 websockets = "*"
 terminaide = "^0.1.1"
-chatline = { git = "https://github.com/anotherbazeinthewall/chatline-interface" }
+chatline = "^0.0.6"
 
 [tool.poetry.group.dev.dependencies]
 pyyaml = "*"
