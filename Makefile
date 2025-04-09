@@ -1,5 +1,11 @@
 .PHONY: serve serve-container ship secure scrap
 
+# Include environment variables
+ifneq (,$(wildcard .env))
+    include .env
+    export
+endif
+
 # Define color codes
 BLUE := \033[1;34m
 RESET := \033[0m
@@ -11,7 +17,7 @@ ARGS := $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
 # Usage: $(call task,command)
 define task
 @printf "Make => $(BLUE)$(1) $(ARGS)$(RESET)\n"
-@$(1) $(ARGS)
+@set -a; [ -f .env ] && . .env; set +a; $(1) $(ARGS)
 @exit 0
 endef
 
@@ -33,6 +39,9 @@ ship:
 
 secure:
 	$(call task,python deployment/manage.py secure)
+
+shield:
+	$(call task,python deployment/modules/shield.py)
 
 scrap:
 	$(call task,python deployment/manage.py scrap)
