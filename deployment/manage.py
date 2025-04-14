@@ -16,6 +16,7 @@ sys.path.append(str(Path(__file__).parent))
 from modules.ship import deploy_application
 from modules.scrap import cleanup_application
 from modules.secure import pick_certificate, enable_https
+from modules.shield import configure_oidc_auth, validate_oidc_config
 from modules.common import DeploymentError
 
 def get_project_name() -> str:
@@ -113,10 +114,20 @@ def load_config() -> Dict:
 
         # Replace placeholders with actual values
         def replace_placeholders(obj):
-            if isinstance(obj, str):
-                return (obj.replace('${PROJECT_NAME}', project_name)
-                          .replace('${AWS_REGION}', aws_region)
-                          .replace('${LATEST_DOCKER_PLATFORM}', docker_platform))
+            if isinstance(obj, str) and '${' in obj and '}' in obj:
+                # Handle specific known replacements
+                result = (obj.replace('${PROJECT_NAME}', project_name)
+                            .replace('${AWS_REGION}', aws_region)
+                            .replace('${LATEST_DOCKER_PLATFORM}', docker_platform))
+                
+                # Handle environment variables for any remaining ${VAR_NAME} patterns
+                import re
+                import os
+                env_vars = re.findall(r'\${([A-Za-z0-9_]+)}', result)
+                for var in env_vars:
+                    if var in os.environ:
+                        result = result.replace(f'${{{var}}}', os.environ[var])
+                return result
             elif isinstance(obj, dict):
                 return {k: replace_placeholders(v) for k, v in obj.items()}
             elif isinstance(obj, list):
@@ -180,6 +191,22 @@ def secure():
         enable_https(config, chosen_cert)
     except DeploymentError as e:
         click.echo(f"Security error: {str(e)}", err=True)
+        sys.exit(1)
+
+@cli.command()
+@click.option('--secret', '-s', help='OIDC client secret (can also use OIDC_CLIENT_SECRET env var)')
+def shield(secret: Optional[str] = None):
+    """Configure OIDC authentication for your EB environment."""
+    try:
+        config = load_config()
+        
+        # Validate OIDC configuration
+        if not validate_oidc_config(config):
+            sys.exit(1)
+            
+        configure_oidc_auth(config, client_secret=secret)
+    except DeploymentError as e:
+        click.echo(f"OIDC configuration error: {str(e)}", err=True)
         sys.exit(1)
 
 if __name__ == '__main__':

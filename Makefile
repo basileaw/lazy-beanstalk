@@ -41,7 +41,7 @@ secure:
 	$(call task,python deployment/manage.py secure)
 
 shield:
-	$(call task,python deployment/modules/shield.py)
+	$(call task,python deployment/manage.py shield)
 
 scrap:
 	$(call task,python deployment/manage.py scrap)

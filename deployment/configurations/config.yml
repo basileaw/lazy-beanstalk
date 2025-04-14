@@ -45,6 +45,24 @@ iam:
     custom_policies:
       - bedrock.json
 
+# OIDC Configuration
+# Required environment variables: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER,
+# OIDC_AUTH_ENDPOINT, OIDC_TOKEN_ENDPOINT, OIDC_USERINFO_ENDPOINT
+oidc:
+  client_id: ${OIDC_CLIENT_ID}
+  client_secret: ${OIDC_CLIENT_SECRET}
+  issuer: ${OIDC_ISSUER}
+  endpoints:
+    authorization: ${OIDC_AUTH_ENDPOINT}
+    token: ${OIDC_TOKEN_ENDPOINT}
+    userinfo: ${OIDC_USERINFO_ENDPOINT}
+  
+  # Default session settings
+  session:
+    cookie_name: federate_id_token
+    timeout: 36000
+    scope: openid
+
 # EB CLI Configuration
 elasticbeanstalk_cli:
   branch-defaults:

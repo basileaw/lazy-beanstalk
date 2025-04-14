@@ -1,3 +1,5 @@
+# scrap.py
+
 """Clean up Elastic Beanstalk environment and associated resources."""
 
 import shutil
@@ -41,6 +43,63 @@ def cleanup_local_config() -> None:
     if config_dir.exists():
         shutil.rmtree(config_dir)
         print("Removed .elasticbeanstalk configuration directory")
+
+@common.aws_handler
+def cleanup_oidc(eb_client, elbv2_client, config: Dict) -> None:
+    """Clean up OIDC authentication rules from ALB listener."""
+    env_name = config['application']['environment']
+    
+    # Find load balancer first
+    lb_arn = common.find_environment_load_balancer(eb_client, elbv2_client, env_name)
+    if not lb_arn:
+        return
+
+    print("Checking for OIDC authentication rules...")
+    
+    # Find HTTPS listener
+    try:
+        listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+        https_listener = next((l for l in listeners if l['Port'] == 443), None)
+        
+        if not https_listener:
+            print("No HTTPS listener found, skipping OIDC cleanup")
+            return
+        
+        # Check for OIDC rules
+        rules = elbv2_client.describe_rules(ListenerArn=https_listener['ListenerArn'])['Rules']
+        oidc_rules = [r for r in rules if not r.get('IsDefault', False) and 
+                      any(a.get('Type') == 'authenticate-oidc' for a in r.get('Actions', []))]
+        
+        if not oidc_rules:
+            print("No OIDC authentication rules found")
+            return
+        
+        print(f"Found {len(oidc_rules)} OIDC authentication rules, removing...")
+        
+        # Delete OIDC rules
+        for rule in oidc_rules:
+            print(f"Removing rule: {rule['RuleArn']}")
+            elbv2_client.delete_rule(RuleArn=rule['RuleArn'])
+        
+        # Restore default action to forward traffic
+        # Get target group
+        target_groups = elbv2_client.describe_target_groups(LoadBalancerArn=lb_arn)['TargetGroups']
+        if target_groups:
+            target_group_arn = target_groups[0]['TargetGroupArn']
+            print("Restoring default HTTPS listener action to forward traffic")
+            elbv2_client.modify_listener(
+                ListenerArn=https_listener['ListenerArn'],
+                DefaultActions=[{
+                    'Type': 'forward',
+                    'TargetGroupArn': target_group_arn
+                }]
+            )
+        
+        print("OIDC authentication rules removed successfully")
+        
+    except ClientError as e:
+        if e.response['Error']['Code'] not in ['LoadBalancerNotFound', 'ListenerNotFound']:
+            raise
 
 @common.aws_handler
 def cleanup_https(eb_client, elbv2_client, r53_client, config: Dict, project_name: str) -> None:
@@ -166,7 +225,10 @@ def cleanup_application(config: Dict) -> None:
     r53_client = session.client('route53')
     env_name = config['application']['environment']
 
-    # Clean up HTTPS resources first if they exist
+    # Clean up OIDC rules first (before we remove the HTTPS listener)
+    cleanup_oidc(eb_client, elbv2_client, config)
+    
+    # Clean up HTTPS resources next
     cleanup_https(eb_client, elbv2_client, r53_client, config, project_name)
 
     # Terminate environment if it exists
