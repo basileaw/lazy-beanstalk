@@ -17,21 +17,22 @@ ARGS := $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
 # Usage: $(call task,command)
 define task
 @printf "Make => $(BLUE)$(1) $(ARGS)$(RESET)\n"
-@set -a; [ -f .env ] && . .env; set +a; $(1) $(ARGS)
-@exit 0
+@set -a; [ -f .env ] && . .env; set +a; $(1) $(ARGS); \
+status=$$?; \
+if [ $$status -eq 130 ]; then \
+    printf "\n$(BLUE)Process terminated by user$(RESET)\n"; \
+    exit 0; \
+else \
+    exit $$status; \
+fi
 endef
 
 # Run application server
 serve:
 	$(call task,python app/main.py)
 
-# Run in Docker container
 serve-container:
-	@printf "Make => $(BLUE)Running in container$(RESET)\n"
-	@sh -c 'DIR=$${PWD##*/} && \
-	docker rm -f $$DIR-web || true && \
-	docker buildx build --force-rm=true --no-cache -t $$DIR-web . && \
-	docker run --rm --name $$DIR-web -p 8000:8000 -v ~/.aws:/root/.aws:ro $$DIR-web'
+	$(call task,docker compose up --build)
 
 # Deployment tasks
 ship:

@@ -1,0 +1,11 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ~/.aws:/root/.aws:ro
+    container_name: ${COMPOSE_PROJECT_NAME:-app}-web
+    restart: unless-stopped
