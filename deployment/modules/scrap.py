@@ -6,7 +6,7 @@ import shutil
 from typing import Dict
 from botocore.exceptions import ClientError
 
-from . import common
+from . import support
 from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger
 )
@@ -19,7 +19,7 @@ def cleanup_local_config() -> None:
         shutil.rmtree(config_dir)
         logger.info("Removed .elasticbeanstalk configuration directory")
 
-@common.aws_handler
+@support.aws_handler
 def cleanup_oidc(env_name: str) -> None:
     """Clean up OIDC authentication rules from ALB listener."""
     eb_client = ClientManager.get_client('elasticbeanstalk')
@@ -27,7 +27,7 @@ def cleanup_oidc(env_name: str) -> None:
     
     # Find load balancer first
     ProgressIndicator.start("Checking for OIDC authentication rules")
-    lb_arn = common.find_environment_load_balancer(env_name)
+    lb_arn = support.find_environment_load_balancer(env_name)
     if not lb_arn:
         ProgressIndicator.complete("load balancer not found")
         return
@@ -84,7 +84,7 @@ def cleanup_oidc(env_name: str) -> None:
             raise
         ProgressIndicator.complete("resource not found")
 
-@common.aws_handler
+@support.aws_handler
 def cleanup_https(env_name: str, project_name: str) -> None:
     """Clean up HTTPS listener and DNS record if they exist."""
     eb_client = ClientManager.get_client('elasticbeanstalk')
@@ -93,13 +93,13 @@ def cleanup_https(env_name: str, project_name: str) -> None:
     
     # Find load balancer first
     ProgressIndicator.start("Checking HTTPS configuration")
-    lb_arn = common.find_environment_load_balancer(env_name)
+    lb_arn = support.find_environment_load_balancer(env_name)
     if not lb_arn:
         ProgressIndicator.complete("load balancer not found")
         return
 
     # Check if HTTPS is enabled
-    is_https_enabled, cert_arn = common.get_https_status(lb_arn, project_name)
+    is_https_enabled, cert_arn = support.get_https_status(lb_arn, project_name)
     if not is_https_enabled:
         ProgressIndicator.complete("not enabled")
         return
@@ -167,7 +167,7 @@ def cleanup_https(env_name: str, project_name: str) -> None:
             raise
         ProgressIndicator.complete("resource not found")
 
-@common.aws_handler
+@support.aws_handler
 def cleanup_instance_profile(config: Dict) -> None:
     """Clean up instance profile and role."""
     iam_client = ClientManager.get_client('iam')
@@ -194,13 +194,13 @@ def cleanup_instance_profile(config: Dict) -> None:
         ProgressIndicator.complete("not found")
 
     # Clean up the role
-    common.manage_iam_role(
+    support.manage_iam_role(
         role_name,
         config['iam']['instance_role_policies'],
         action='cleanup'
     )
 
-@common.aws_handler
+@support.aws_handler
 def cleanup_s3_bucket(config: Dict) -> None:
     """Clean up the application version S3 bucket."""
     s3_client = ClientManager.get_client('s3')
@@ -257,7 +257,7 @@ def cleanup_application(config: Dict) -> None:
         if env_exists:
             logger.info(f"Terminating environment: {env_name}")
             eb_client.terminate_environment(EnvironmentName=env_name)
-            common.wait_for_env_status(env_name, 'Terminated')
+            support.wait_for_env_status(env_name, 'Terminated')
         else:
             ProgressIndicator.complete("not found")
     except ClientError:
@@ -265,14 +265,14 @@ def cleanup_application(config: Dict) -> None:
 
     # Check if there are any other environments before cleaning up shared resources
     ProgressIndicator.start("Checking for other active environments")
-    no_other_envs = not common.check_env_exists()
+    no_other_envs = not support.check_env_exists()
     
     if no_other_envs:
         logger.info("No active environments found, cleaning up shared resources")
         
         # Clean up IAM resources
         cleanup_instance_profile(config)
-        common.manage_iam_role(
+        support.manage_iam_role(
             config['iam']['service_role_name'],
             config['iam']['service_role_policies'],
             action='cleanup'

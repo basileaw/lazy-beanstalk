@@ -15,8 +15,8 @@ from typing import Dict, Any, Optional
 import yaml
 from botocore.exceptions import ClientError
 
-from . import common
-from .common import DeploymentError
+from . import support
+from .support import DeploymentError
 from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger,
     get_eb_cli_platform_name
@@ -96,7 +96,7 @@ def create_app_bundle() -> str:
     ProgressIndicator.complete(f"added {file_count} files")
     return str(bundle_path)
 
-@common.aws_handler
+@support.aws_handler
 def ensure_instance_profile(config: Dict[str, Any]) -> None:
     """Set up instance profile and its associated role."""
     iam_client = ClientManager.get_client('iam')
@@ -104,7 +104,7 @@ def ensure_instance_profile(config: Dict[str, Any]) -> None:
     role_name = config['iam']['instance_role_name']
     
     # Set up the role first
-    common.manage_iam_role(role_name, config['iam']['instance_role_policies'])
+    support.manage_iam_role(role_name, config['iam']['instance_role_policies'])
     
     try:
         iam_client.get_instance_profile(InstanceProfileName=profile_name)
@@ -162,7 +162,7 @@ def wait_for_version(app_name: str, version: str) -> None:
         ProgressIndicator.step()
         time.sleep(3)
 
-@common.aws_handler
+@support.aws_handler
 def preserve_env_state(env_name: str, project_name: str) -> Optional[Dict[str, Any]]:
     """
     Preserve environment state before update, including HTTPS configuration.
@@ -175,12 +175,12 @@ def preserve_env_state(env_name: str, project_name: str) -> Optional[Dict[str, A
         Dictionary containing state to preserve, or None if no state to preserve
     """
     # Get load balancer ARN
-    lb_arn = common.find_environment_load_balancer(env_name)
+    lb_arn = support.find_environment_load_balancer(env_name)
     if not lb_arn:
         return None
 
     # Preserve HTTPS configuration if it exists
-    https_config = common.preserve_https_config(lb_arn, project_name)
+    https_config = support.preserve_https_config(lb_arn, project_name)
     if not https_config:
         return None
 
@@ -202,7 +202,7 @@ def restore_env_state(state: Dict[str, Any], project_name: str) -> None:
 
     if 'https_config' in state and state['https_config']:
         logger.info("Restoring HTTPS configuration...")
-        common.restore_https_config(
+        support.restore_https_config(
             state['load_balancer_arn'],
             state['https_config'],
             project_name
@@ -221,7 +221,7 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
     )['Environments']
     env_exists = bool(envs)
     
-    settings = common.get_env_settings(config)
+    settings = support.get_env_settings(config)
     state = None
     
     if env_exists:
@@ -250,7 +250,7 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
         )
     
     # Wait for environment to be ready
-    common.wait_for_env_status(env_name, 'Ready')
+    support.wait_for_env_status(env_name, 'Ready')
     
     # Restore state if needed
     if state:
@@ -334,7 +334,7 @@ def deploy_application(config: Dict[str, Any]) -> None:
     sts_client = ClientManager.get_client('sts')
     
     # Set up service role
-    common.manage_iam_role(
+    support.manage_iam_role(
         config['iam']['service_role_name'],
         config['iam']['service_role_policies']
     )

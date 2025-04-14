@@ -5,7 +5,7 @@ import click
 import getpass
 from typing import Dict, Optional, Tuple
 
-from .common import DeploymentError, aws_handler
+from .support import DeploymentError, aws_handler
 from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger,
     ensure_env_in_gitignore

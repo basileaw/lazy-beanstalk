@@ -8,13 +8,13 @@ Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
 import time
 from typing import Dict
 
-from . import common
-from .common import DeploymentError
+from . import support
+from .support import DeploymentError
 from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger
 )
 
-@common.aws_handler
+@support.aws_handler
 def pick_certificate(acm_client=None) -> str:
     """
     Choose or auto-select an ISSUED ACM certificate.
@@ -49,7 +49,7 @@ def pick_certificate(acm_client=None) -> str:
             pass
         print("Invalid selection. Try again.")
 
-@common.aws_handler
+@support.aws_handler
 def get_hosted_zone_id(domain: str) -> str:
     """
     Return the ID of the best-matching hosted zone for `domain`.
@@ -69,7 +69,7 @@ def get_hosted_zone_id(domain: str) -> str:
     
     return best_zone['Id']
 
-@common.aws_handler
+@support.aws_handler
 def ensure_security_group_https(lb_arn: str) -> None:
     """
     Authorize inbound and outbound HTTPS if missing on the LB's security group.
@@ -134,7 +134,7 @@ def ensure_security_group_https(lb_arn: str) -> None:
     else:
         ProgressIndicator.complete("Already configured")
 
-@common.aws_handler
+@support.aws_handler
 def create_dns_record(zone_id: str, domain: str, lb_dns: str) -> dict:
     """
     UPSERT a CNAME record pointing `domain` to `lb_dns`.
@@ -193,7 +193,7 @@ def enable_https(config: Dict, cert_arn: str) -> None:
 
     # Find load balancer
     ProgressIndicator.start("Locating environment load balancer")
-    lb_arn = common.find_environment_load_balancer(env_name)
+    lb_arn = support.find_environment_load_balancer(env_name)
     if not lb_arn:
         raise DeploymentError("No load balancer found for environment")
     
@@ -203,7 +203,7 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     # Configure security and HTTPS
     logger.info("Configuring HTTPS")
     ensure_security_group_https(lb_arn)
-    common.setup_https_listener(lb_arn, cert_arn, project_name)
+    support.setup_https_listener(lb_arn, cert_arn, project_name)
 
     # Set up DNS
     logger.info("Configuring DNS")

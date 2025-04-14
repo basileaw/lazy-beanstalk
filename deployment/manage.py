@@ -16,7 +16,7 @@ from modules.ship import deploy_application
 from modules.scrap import cleanup_application
 from modules.secure import pick_certificate, enable_https
 from modules.shield import configure_oidc_auth, validate_oidc_config
-from modules.common import DeploymentError
+from deployment.modules.support import DeploymentError
 
 def init_environment(command=None):
     """
