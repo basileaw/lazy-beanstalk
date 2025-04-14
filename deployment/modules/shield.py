@@ -2,6 +2,7 @@
 
 import os
 import getpass
+import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 import boto3
@@ -9,9 +10,98 @@ import click
 
 from .common import DeploymentError, aws_handler
 
+def ensure_env_in_gitignore():
+    """Ensure .env is listed in .gitignore file."""
+    project_root = Path(__file__).parent.parent.parent
+    gitignore_path = project_root / '.gitignore'
+    
+    # Check if .gitignore exists
+    if not gitignore_path.exists():
+        click.echo("Creating .gitignore file with .env entry")
+        with open(gitignore_path, 'w') as f:
+            f.write(".env\n")
+        return
+    
+    # Check if .env is already in .gitignore
+    with open(gitignore_path, 'r') as f:
+        content = f.read()
+    
+    if ".env" not in content.splitlines():
+        click.echo("Adding .env to .gitignore")
+        with open(gitignore_path, 'a') as f:
+            # Add newline if needed
+            if not content.endswith('\n'):
+                f.write('\n')
+            f.write(".env\n")
+
+def prompt_for_missing_oidc_vars(config):
+    """Prompt for missing OIDC variables and save them to .env file."""
+    required_vars = [
+        ('client_id', 'OIDC_CLIENT_ID', "Enter OIDC client ID"),
+        ('client_secret', 'OIDC_CLIENT_SECRET', "Enter OIDC client secret"),
+        ('issuer', 'OIDC_ISSUER', "Enter OIDC issuer URL"),
+        ('endpoints.authorization', 'OIDC_AUTH_ENDPOINT', "Enter authorization endpoint URL"),
+        ('endpoints.token', 'OIDC_TOKEN_ENDPOINT', "Enter token endpoint URL"),
+        ('endpoints.userinfo', 'OIDC_USERINFO_ENDPOINT', "Enter userinfo endpoint URL")
+    ]
+    
+    # Find which variables are missing
+    missing = []
+    for config_path, env_var, prompt_text in required_vars:
+        if env_var not in os.environ or not os.environ[env_var]:
+            missing.append((env_var, prompt_text))
+    
+    if not missing:
+        return True  # All variables are present
+        
+    # Prompt for missing variables
+    click.echo("\nSome required OIDC variables are missing. Please provide them:")
+    new_vars = {}
+    
+    for env_var, prompt_text in missing:
+        if env_var == 'OIDC_CLIENT_SECRET':
+            value = getpass.getpass(f"{prompt_text}: ")
+        else:
+            value = click.prompt(prompt_text)
+        
+        new_vars[env_var] = value
+        os.environ[env_var] = value  # Set for current session
+    
+    # Ask if user wants to save to .env
+    if click.confirm("\nWould you like to save these values to .env file for future use?", default=True):
+        # Ensure .env is in .gitignore first
+        ensure_env_in_gitignore()
+        
+        project_root = Path(__file__).parent.parent.parent
+        env_path = project_root / '.env'
+        
+        # Read existing .env if it exists
+        existing_vars = {}
+        if env_path.exists():
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        existing_vars[key.strip()] = value.strip()
+        
+        # Update with new values
+        existing_vars.update(new_vars)
+        
+        # Write back to .env
+        with open(env_path, 'w') as f:
+            f.write("# OIDC Configuration - SENSITIVE INFORMATION\n\n")
+            for key, value in existing_vars.items():
+                f.write(f"{key}={value}\n")
+        
+        click.echo(f"Values saved to {env_path}")
+    
+    return True
+
 def validate_oidc_config(config: Dict) -> bool:
     """
     Validate OIDC configuration and provide helpful error messages.
+    If interactive mode is enabled, prompt for missing values.
     
     Args:
         config: The loaded configuration dictionary
@@ -22,37 +112,23 @@ def validate_oidc_config(config: Dict) -> bool:
     if 'oidc' not in config:
         click.echo("ERROR: Missing 'oidc' section in configuration.", err=True)
         return False
-        
-    required_vars = [
-        ('client_id', 'OIDC_CLIENT_ID'),
-        ('client_secret', 'OIDC_CLIENT_SECRET'),
-        ('issuer', 'OIDC_ISSUER'),
-        ('endpoints.authorization', 'OIDC_AUTH_ENDPOINT'),
-        ('endpoints.token', 'OIDC_TOKEN_ENDPOINT'),
-        ('endpoints.userinfo', 'OIDC_USERINFO_ENDPOINT')
-    ]
     
-    missing = []
-    for config_path, env_var in required_vars:
-        parts = config_path.split('.')
-        value = config['oidc']
-        for part in parts:
-            if isinstance(value, dict) and part in value:
-                value = value[part]
-            else:
-                value = None
-                break
-        
-        if not value:
-            missing.append(env_var)
+    # Try to get missing variables through prompts
+    if not prompt_for_missing_oidc_vars(config):
+        return False
+    
+    # Final check after prompting
+    required_vars = ['OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'OIDC_ISSUER', 
+                    'OIDC_AUTH_ENDPOINT', 'OIDC_TOKEN_ENDPOINT', 'OIDC_USERINFO_ENDPOINT']
+    
+    missing = [var for var in required_vars if var not in os.environ or not os.environ[var]]
     
     if missing:
-        click.echo("ERROR: Missing required OIDC environment variables:", err=True)
+        click.echo("ERROR: Still missing required OIDC environment variables:", err=True)
         for var in missing:
             click.echo(f"  - {var}", err=True)
-        click.echo("\nPlease set these environment variables and try again.", err=True)
         return False
-        
+    
     return True
 
 @aws_handler
@@ -119,13 +195,27 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
         client_secret: Optional client secret (will be prompted if not provided)
     """
     env_name = config['application']['environment']
-    oidc_config = config['oidc']
+    
+    # Prioritize environment variables over config file values
+    oidc_config = {
+        'client_id': os.environ.get('OIDC_CLIENT_ID', config['oidc']['client_id']),
+        'client_secret': client_secret or os.environ.get('OIDC_CLIENT_SECRET', ''),
+        'issuer': os.environ.get('OIDC_ISSUER', config['oidc']['issuer']),
+        'endpoints': {
+            'authorization': os.environ.get('OIDC_AUTH_ENDPOINT', config['oidc']['endpoints']['authorization']),
+            'token': os.environ.get('OIDC_TOKEN_ENDPOINT', config['oidc']['endpoints']['token']),
+            'userinfo': os.environ.get('OIDC_USERINFO_ENDPOINT', config['oidc']['endpoints']['userinfo']),
+        },
+        'session': config['oidc']['session']  # Non-sensitive, use config values
+    }
     
     click.echo(f"Configuring OIDC authentication for {env_name}...")
     
     # Get the client secret if not provided
-    client_secret = client_secret or get_client_secret()
-    if not client_secret:
+    if not oidc_config['client_secret']:
+        oidc_config['client_secret'] = get_client_secret()
+    
+    if not oidc_config['client_secret']:
         raise DeploymentError("OIDC client secret is required")
     
     # Find the HTTPS listener
@@ -156,7 +246,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
             'TokenEndpoint': oidc_config['endpoints']['token'],
             'UserInfoEndpoint': oidc_config['endpoints']['userinfo'],
             'ClientId': oidc_config['client_id'],
-            'ClientSecret': client_secret,
+            'ClientSecret': oidc_config['client_secret'],
             'SessionCookieName': oidc_config['session']['cookie_name'],
             'SessionTimeout': oidc_config['session']['timeout'],
             'Scope': oidc_config['session']['scope'],
