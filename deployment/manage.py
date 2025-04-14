@@ -9,7 +9,7 @@ import click
 from typing import Optional
 
 from modules.configure import (
-    ConfigurationManager, ClientManager, ProgressIndicator, logger,
+    ConfigurationManager, ClientManager, logger,
     ConfigurationError
 )
 from modules.ship import deploy_application
@@ -18,11 +18,28 @@ from modules.secure import pick_certificate, enable_https
 from modules.shield import configure_oidc_auth, validate_oidc_config
 from modules.common import DeploymentError
 
-def init_environment():
-    """Initialize the environment before running commands."""
+def init_environment(command=None):
+    """
+    Initialize the environment before running commands.
+    Uses cached platform information when available to avoid redundant AWS API calls.
+    
+    Args:
+        command: The command being executed, controls logging verbosity
+    """
     try:
-        # Try to load config - this will initialize ClientManager with the correct region
-        config = ConfigurationManager.load_config()
+        # Only show verbose logging during the initial 'ship' command
+        verbose_logging = (command == 'ship')
+        
+        # Check if EB config exists - this indicates a prior successful deployment
+        eb_config_path = ConfigurationManager.get_eb_config_path()
+        if eb_config_path:
+            # If .elasticbeanstalk directory exists, check for cached solution stack
+            cached_stack = ConfigurationManager.get_cached_solution_stack()
+            if cached_stack:
+                logger.debug(f"Using cached solution stack from previous deployment: {cached_stack}")
+        
+        # Load config - leverages caching for platform discovery
+        config = ConfigurationManager.load_config(verbose_logging=verbose_logging)
         return config
     except ConfigurationError as e:
         logger.error(f"Configuration error: {str(e)}")
@@ -38,7 +55,7 @@ def ship():
     """Deploy the application."""
     try:
         logger.info("Starting deployment process")
-        config = init_environment()
+        config = init_environment(command='ship')
         if not config:
             sys.exit(1)
             
@@ -55,7 +72,7 @@ def scrap():
     """Clean up all resources."""
     try:
         logger.info("Starting cleanup process")
-        config = init_environment()
+        config = init_environment(command='scrap')
         if not config:
             sys.exit(1)
             
@@ -72,7 +89,7 @@ def secure():
     """Enable HTTPS (ACM + Route53) on your EB environment."""
     try:
         logger.info("Starting HTTPS configuration process")
-        config = init_environment()
+        config = init_environment(command='secure')
         if not config:
             sys.exit(1)
         
@@ -100,7 +117,7 @@ def shield(secret: Optional[str] = None):
     """Configure OIDC authentication for your EB environment."""
     try:
         logger.info("Starting OIDC configuration process")
-        config = init_environment()
+        config = init_environment(command='shield')
         if not config:
             sys.exit(1)
         

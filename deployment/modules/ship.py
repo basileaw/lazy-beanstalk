@@ -270,6 +270,10 @@ def create_eb_cli_config(config: Dict[str, Any]) -> None:
     eb_dir = project_root / '.elasticbeanstalk'
     eb_dir.mkdir(exist_ok=True)
     
+    # Get the solution stack name and save it to cache
+    solution_stack = config['aws']['platform']
+    ConfigurationManager.save_solution_stack(solution_stack)
+    
     # Check if elasticbeanstalk_cli section exists
     if 'elasticbeanstalk_cli' not in config:
         logger.info("No elasticbeanstalk_cli section found in config.yml, generating default")
@@ -285,7 +289,7 @@ def create_eb_cli_config(config: Dict[str, Any]) -> None:
                 'application_name': config['application']['name'],
                 'branch': None,
                 'default_ec2_keyname': None,
-                'default_platform': get_eb_cli_platform_name(config['aws']['platform']),
+                'default_platform': get_eb_cli_platform_name(solution_stack),
                 'default_region': config['aws']['region'],
                 'include_git_submodules': True,
                 'instance_profile': None,
@@ -305,7 +309,7 @@ def create_eb_cli_config(config: Dict[str, Any]) -> None:
         if 'global' in eb_config and 'default_platform' in eb_config['global']:
             platform_value = eb_config['global']['default_platform']
             if isinstance(platform_value, str) and '${EB_CLI_PLATFORM}' in platform_value:
-                eb_config['global']['default_platform'] = get_eb_cli_platform_name(config['aws']['platform'])
+                eb_config['global']['default_platform'] = get_eb_cli_platform_name(solution_stack)
     
     # Write the config file
     config_path = eb_dir / 'config.yml'

@@ -111,6 +111,7 @@ class ConfigurationManager:
     _eb_config = None
     _project_root = None
     _project_name = None
+    _solution_stack_cache = None
     
     @classmethod
     def get_project_root(cls) -> Path:
@@ -158,6 +159,46 @@ class ConfigurationManager:
         return path if path.exists() else None
     
     @classmethod
+    def get_solution_stack_cache_path(cls) -> Path:
+        """Return the path to the solution stack cache file."""
+        eb_dir = cls.get_project_root() / '.elasticbeanstalk'
+        return eb_dir / '.stack_cache'
+    
+    @classmethod
+    def save_solution_stack(cls, solution_stack: str) -> None:
+        """Save solution stack name to cache file for future reference."""
+        if not solution_stack:
+            return
+            
+        cache_path = cls.get_solution_stack_cache_path()
+        # Create directory if it doesn't exist
+        cache_path.parent.mkdir(exist_ok=True)
+        
+        with open(cache_path, 'w') as f:
+            f.write(solution_stack)
+        
+        # Update in-memory cache
+        cls._solution_stack_cache = solution_stack
+    
+    @classmethod
+    def get_cached_solution_stack(cls) -> Optional[str]:
+        """Get solution stack from cache file if it exists."""
+        if cls._solution_stack_cache is not None:
+            return cls._solution_stack_cache
+            
+        cache_path = cls.get_solution_stack_cache_path()
+        if cache_path.exists():
+            try:
+                stack = cache_path.read_text().strip()
+                if stack:
+                    cls._solution_stack_cache = stack
+                    return stack
+            except Exception:
+                pass
+        
+        return None
+    
+    @classmethod
     def load_eb_config(cls) -> Optional[Dict]:
         """Load the .elasticbeanstalk/config.yml configuration if it exists."""
         if cls._eb_config is not None:
@@ -187,7 +228,14 @@ class ConfigurationManager:
     
     @classmethod
     def get_platform_from_eb_config(cls) -> Optional[str]:
-        """Get platform from EB CLI configuration."""
+        """Get platform from EB CLI configuration or stack cache."""
+        # First check cached solution stack - this is the most efficient
+        cached_stack = cls.get_cached_solution_stack()
+        if cached_stack:
+            logger.debug(f"Using cached solution stack: {cached_stack}")
+            return cached_stack
+            
+        # If no cache, try the EB config
         eb_config = cls.load_eb_config()
         if eb_config and 'global' in eb_config and 'default_platform' in eb_config['global']:
             platform = eb_config['global']['default_platform']
@@ -272,44 +320,49 @@ class ConfigurationManager:
         Get the latest Docker platform from Elastic Beanstalk if not in EB config.
         Returns the exact solution stack name needed for environment creation.
         """
-        # Try to get platform from EB CLI config first
+        # First check for cached solution stack
+        cached_stack = cls.get_cached_solution_stack()
+        if cached_stack:
+            logger.debug(f"Using cached solution stack: {cached_stack}")
+            return cached_stack
+        
+        # Try to get platform from EB CLI config
         platform = cls.get_platform_from_eb_config()
         if platform:
-            # Convert EB CLI platform name to solution stack if needed
+            # Check if this is already a solution stack name (starts with bit architecture)
+            if platform.startswith('64bit'):
+                # This is already a solution stack name, we can use it directly
+                return platform
+                
+            # If it's a platform name like "Docker running on 64bit Amazon Linux 2023"
+            # we need to convert it to a solution stack name
             platform_name = platform.lower()
-            if 'docker' in platform_name and not platform_name.startswith('64bit'):
+            if 'docker' in platform_name:
                 logger.debug(f"Converting EB CLI platform name to solution stack: {platform}")
-                # Use ClientManager to get the client
-                eb_client = ClientManager.get_client('elasticbeanstalk')
-                
-                # Get all available solution stacks
-                solution_stacks = eb_client.list_available_solution_stacks()['SolutionStacks']
-                
-                # Filter for Docker stacks that match our platform
-                docker_stacks = [
-                    s for s in solution_stacks 
-                    if 'Docker' in s and platform_name in s.lower()
-                ]
-                
-                if docker_stacks:
-                    # Sort to get the latest version
-                    platform = sorted(docker_stacks, reverse=True)[0]
-                    logger.info(f"Found matching Docker solution stack: {platform}")
-                else:
-                    logger.warning(f"No matching Docker solution stack found for {platform}")
-                    # Fall back to regular platform discovery
-                    return cls._discover_latest_platform()
-            
-            return platform
+                # Get the solution stack from AWS API
+                solution_stack = cls._discover_latest_platform(platform_name)
+                # Cache it for future use
+                cls.save_solution_stack(solution_stack)
+                return solution_stack
         
-        # No platform in EB config, discover latest
-        return cls._discover_latest_platform()
+        # No platform in EB config or cache, discover latest
+        solution_stack = cls._discover_latest_platform()
+        # Cache the discovered solution stack
+        cls.save_solution_stack(solution_stack)
+        return solution_stack
     
     @classmethod
-    def _discover_latest_platform(cls) -> str:
+    def _discover_latest_platform(cls, platform_hint=None) -> str:
         """
         Discover the latest Docker platform from AWS.
-        Used when no platform is specified in EB CLI config.
+        Used when no platform is specified in EB config or when converting 
+        from EB CLI format to solution stack.
+        
+        Args:
+            platform_hint: Optional string to filter solution stacks (e.g., "amazon linux 2023")
+        
+        Returns:
+            str: The solution stack name
         """
         try:
             # Use ClientManager to get the client
@@ -327,6 +380,13 @@ class ConfigurationManager:
             if not docker_stacks:
                 ProgressIndicator.complete("failed")
                 raise ConfigurationError("No Docker solution stacks found in this region")
+            
+            # If we have a platform hint, filter for matching stacks
+            if platform_hint:
+                platform_hint = platform_hint.lower()
+                filtered_stacks = [s for s in docker_stacks if platform_hint in s.lower()]
+                if filtered_stacks:
+                    docker_stacks = filtered_stacks
             
             # First try to find Amazon Linux 2023 Docker stacks
             al2023_stacks = [s for s in docker_stacks if 'Amazon Linux 2023' in s]
@@ -389,14 +449,15 @@ class ConfigurationManager:
         return obj
             
     @classmethod
-    def load_config(cls, reset_cache=False) -> Dict:
+    def load_config(cls, reset_cache=False, verbose_logging=False) -> Dict:
         """
         Load configuration from YAML and replace placeholders.
         Uses cached version if already loaded.
         
         Args:
             reset_cache: Force reload config even if cached
-            
+            verbose_logging: Whether to log basic config details
+                
         Returns:
             Dict: The loaded and processed configuration
         """
@@ -413,6 +474,10 @@ class ConfigurationManager:
             
             # Initialize the client manager with our region
             ClientManager.initialize(aws_region)
+            
+            # Check if we already have platform info cached
+            cached_stack = cls.get_cached_solution_stack()
+            is_first_run = not cached_stack
             
             # Get platform - use eb config if available
             docker_platform = cls.get_latest_docker_platform()
@@ -431,10 +496,11 @@ class ConfigurationManager:
             # Replace placeholders
             config = cls.replace_placeholders(config, replacements)
             
-            # Log the resolved values
-            logger.info(f"Project Name: {project_name}")
-            logger.info(f"AWS Region: {aws_region}")
-            logger.info(f"Platform: {docker_platform}")
+            # Only log the basic config info during first run or when verbose_logging is enabled
+            if is_first_run or verbose_logging:
+                logger.info(f"Project Name: {project_name}")
+                logger.info(f"AWS Region: {aws_region}")
+                logger.info(f"Platform: {docker_platform}")
             
             # Validate required fields
             validate_config(config)
