@@ -6,8 +6,8 @@ import shutil
 from typing import Dict
 from botocore.exceptions import ClientError
 
-from . import support
-from .setup import (
+from . import common
+from .support import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger
 )
 
@@ -19,7 +19,7 @@ def cleanup_local_config() -> None:
         shutil.rmtree(config_dir)
         logger.info("Removed .elasticbeanstalk configuration directory")
 
-@support.aws_handler
+@common.aws_handler
 def cleanup_oidc(env_name: str) -> None:
     """Clean up OIDC authentication rules from ALB listener."""
     eb_client = ClientManager.get_client('elasticbeanstalk')
@@ -27,7 +27,7 @@ def cleanup_oidc(env_name: str) -> None:
     
     # Find load balancer first
     ProgressIndicator.start("Checking for OIDC authentication rules")
-    lb_arn = support.find_environment_load_balancer(env_name)
+    lb_arn = common.find_environment_load_balancer(env_name)
     if not lb_arn:
         ProgressIndicator.complete("load balancer not found")
         return
@@ -60,23 +60,40 @@ def cleanup_oidc(env_name: str) -> None:
             logger.info(f"Removing rule: {rule['RuleArn']}")
             elbv2_client.delete_rule(RuleArn=rule['RuleArn'])
         
-        # Restore default action to forward traffic
-        # Get target group
-        ProgressIndicator.start("Restoring default HTTPS listener action")
-        target_groups = elbv2_client.describe_target_groups(LoadBalancerArn=lb_arn)['TargetGroups']
-        if target_groups:
-            target_group_arn = target_groups[0]['TargetGroupArn']
-            elbv2_client.modify_listener(
-                ListenerArn=https_listener['ListenerArn'],
-                DefaultActions=[{
-                    'Type': 'forward',
-                    'TargetGroupArn': target_group_arn
-                }]
-            )
-            ProgressIndicator.complete("restored")
-            logger.info("OIDC authentication rules removed successfully")
-        else:
-            logger.warning("Could not restore default action: no target groups found")
+        # Try to restore default action to forward traffic
+        ProgressIndicator.start("Checking target groups for default action restoration")
+        try:
+            target_groups = elbv2_client.describe_target_groups(LoadBalancerArn=lb_arn)['TargetGroups']
+            if target_groups:
+                target_group_arn = target_groups[0]['TargetGroupArn']
+                try:
+                    # Verify listener still exists before modifying it
+                    elbv2_client.describe_listeners(ListenerArns=[https_listener['ListenerArn']])
+                    elbv2_client.modify_listener(
+                        ListenerArn=https_listener['ListenerArn'],
+                        DefaultActions=[{
+                            'Type': 'forward',
+                            'TargetGroupArn': target_group_arn
+                        }]
+                    )
+                    ProgressIndicator.complete("restored")
+                    logger.info("OIDC authentication rules removed successfully")
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'ListenerNotFound':
+                        ProgressIndicator.complete("listener removed")
+                        logger.info("Listener was removed during cleanup")
+                    else:
+                        raise
+            else:
+                # Handle case with no target groups more gracefully
+                ProgressIndicator.complete("no target groups")
+                logger.info("OIDC rules removed, but no target groups found for default action")
+        except ClientError as e:
+            if e.response['Error']['Code'] in ['LoadBalancerNotFound', 'TargetGroupNotFound']:
+                ProgressIndicator.complete("resources changed")
+                logger.info(f"Resources changed during cleanup: {e.response['Error']['Code']}")
+            else:
+                raise
         
     except ClientError as e:
         if e.response['Error']['Code'] not in ['LoadBalancerNotFound', 'ListenerNotFound']:
@@ -84,7 +101,7 @@ def cleanup_oidc(env_name: str) -> None:
             raise
         ProgressIndicator.complete("resource not found")
 
-@support.aws_handler
+@common.aws_handler
 def cleanup_https(env_name: str, project_name: str) -> None:
     """Clean up HTTPS listener and DNS record if they exist."""
     eb_client = ClientManager.get_client('elasticbeanstalk')
@@ -93,13 +110,13 @@ def cleanup_https(env_name: str, project_name: str) -> None:
     
     # Find load balancer first
     ProgressIndicator.start("Checking HTTPS configuration")
-    lb_arn = support.find_environment_load_balancer(env_name)
+    lb_arn = common.find_environment_load_balancer(env_name)
     if not lb_arn:
         ProgressIndicator.complete("load balancer not found")
         return
 
     # Check if HTTPS is enabled
-    is_https_enabled, cert_arn = support.get_https_status(lb_arn, project_name)
+    is_https_enabled, cert_arn = common.get_https_status(lb_arn, project_name)
     if not is_https_enabled:
         ProgressIndicator.complete("not enabled")
         return
@@ -167,7 +184,7 @@ def cleanup_https(env_name: str, project_name: str) -> None:
             raise
         ProgressIndicator.complete("resource not found")
 
-@support.aws_handler
+@common.aws_handler
 def cleanup_instance_profile(config: Dict) -> None:
     """Clean up instance profile and role."""
     iam_client = ClientManager.get_client('iam')
@@ -194,13 +211,13 @@ def cleanup_instance_profile(config: Dict) -> None:
         ProgressIndicator.complete("not found")
 
     # Clean up the role
-    support.manage_iam_role(
+    common.manage_iam_role(
         role_name,
         config['iam']['instance_role_policies'],
         action='cleanup'
     )
 
-@support.aws_handler
+@common.aws_handler
 def cleanup_s3_bucket(config: Dict) -> None:
     """Clean up the application version S3 bucket."""
     s3_client = ClientManager.get_client('s3')
@@ -257,7 +274,7 @@ def cleanup_application(config: Dict) -> None:
         if env_exists:
             logger.info(f"Terminating environment: {env_name}")
             eb_client.terminate_environment(EnvironmentName=env_name)
-            support.wait_for_env_status(env_name, 'Terminated')
+            common.wait_for_env_status(env_name, 'Terminated')
         else:
             ProgressIndicator.complete("not found")
     except ClientError:
@@ -265,14 +282,14 @@ def cleanup_application(config: Dict) -> None:
 
     # Check if there are any other environments before cleaning up shared resources
     ProgressIndicator.start("Checking for other active environments")
-    no_other_envs = not support.check_env_exists()
+    no_other_envs = not common.check_env_exists()
     
     if no_other_envs:
         logger.info("No active environments found, cleaning up shared resources")
         
         # Clean up IAM resources
         cleanup_instance_profile(config)
-        support.manage_iam_role(
+        common.manage_iam_role(
             config['iam']['service_role_name'],
             config['iam']['service_role_policies'],
             action='cleanup'
