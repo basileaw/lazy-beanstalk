@@ -4,13 +4,14 @@
 
 import json
 import time
-import logging
-from datetime import datetime
-from functools import wraps
-from pathlib import Path
-from typing import Dict, Set, Optional, List, Callable, Tuple, Any
 import boto3
+import logging
+from functools import wraps
+from datetime import datetime
 from botocore.exceptions import ClientError
+from typing import Dict, Set, Optional, List, Callable, Tuple, Any
+
+from .configure import load_policy
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -33,25 +34,6 @@ def aws_handler(func: Callable) -> Callable:
                 logger.error(error_message)
                 raise DeploymentError(error_message)
     return wrapper
-
-def load_policy(filename: str) -> Dict:
-    """Load JSON policy file."""
-    try:
-        policy_path = Path(__file__).parent.parent / 'policies' / filename
-        if not policy_path.exists():
-            logger.error(f"Policy file not found: {policy_path}")
-            raise DeploymentError(f"Policy file not found: {policy_path}")
-            
-        policy_content = policy_path.read_text()
-        logger.debug(f"Loaded policy content from {filename}: {policy_content[:100]}...")
-        policy = json.loads(policy_content)
-        return policy
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in policy file {filename}: {e}")
-        raise DeploymentError(f"Failed to parse JSON in {filename}: {e}")
-    except Exception as e:
-        logger.error(f"Failed to load {filename}: {e}")
-        raise DeploymentError(f"Failed to load {filename}: {e}")
 
 def print_events(eb_client, env_name: str, after: Optional[datetime], seen: Set[str]) -> datetime:
     """Print and track new environment events."""
@@ -277,7 +259,7 @@ def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'c
                 raise
             logger.info(f"Role {role_name} doesn't exist, skipping deletion")
 
-# New HTTPS Management Functions
+# HTTPS Management Functions
 
 def get_resource_prefix(project_name: str) -> str:
     """Generate consistent prefix for resource tags."""

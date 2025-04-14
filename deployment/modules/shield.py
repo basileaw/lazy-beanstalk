@@ -1,38 +1,15 @@
 # modules/shield.py
 
 import os
-import getpass
-import re
-from pathlib import Path
-from typing import Dict, Optional, Tuple
-import boto3
 import click
+import getpass
+from typing import Dict, Optional, Tuple
 
 from .common import DeploymentError, aws_handler
-
-def ensure_env_in_gitignore():
-    """Ensure .env is listed in .gitignore file."""
-    project_root = Path(__file__).parent.parent.parent
-    gitignore_path = project_root / '.gitignore'
-    
-    # Check if .gitignore exists
-    if not gitignore_path.exists():
-        click.echo("Creating .gitignore file with .env entry")
-        with open(gitignore_path, 'w') as f:
-            f.write(".env\n")
-        return
-    
-    # Check if .env is already in .gitignore
-    with open(gitignore_path, 'r') as f:
-        content = f.read()
-    
-    if ".env" not in content.splitlines():
-        click.echo("Adding .env to .gitignore")
-        with open(gitignore_path, 'a') as f:
-            # Add newline if needed
-            if not content.endswith('\n'):
-                f.write('\n')
-            f.write(".env\n")
+from .configure import (
+    get_project_root, get_project_name, ensure_env_in_gitignore,
+    get_aws_clients
+)
 
 def prompt_for_missing_oidc_vars(config):
     """Prompt for missing OIDC variables and save them to .env file."""
@@ -72,7 +49,7 @@ def prompt_for_missing_oidc_vars(config):
         # Ensure .env is in .gitignore first
         ensure_env_in_gitignore()
         
-        project_root = Path(__file__).parent.parent.parent
+        project_root = get_project_root()
         env_path = project_root / '.env'
         
         # Read existing .env if it exists
@@ -136,30 +113,30 @@ def get_domain_from_listener(elbv2_client, listener_arn: str) -> str:
     """Extract domain from the certificate attached to the HTTPS listener."""
     listener = elbv2_client.describe_listeners(ListenerArns=[listener_arn])['Listeners'][0]
     cert_arn = listener['Certificates'][0]['CertificateArn']
-    acm_client = boto3.client('acm')
+    acm_client = get_aws_clients({'aws': {'region': os.environ.get('AWS_REGION')}})['acm']
     cert = acm_client.describe_certificate(CertificateArn=cert_arn)['Certificate']
-    project_name = Path(__file__).parent.parent.parent.name
+    project_name = get_project_name()
     return cert['DomainName'].replace('*', project_name)
 
 @aws_handler
-def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
+def find_listener_arn(env_name: str, aws_clients: Dict) -> Tuple[Optional[str], Optional[str]]:
     """Find HTTPS listener ARN for the environment's ALB."""
-    eb = boto3.client('elasticbeanstalk')
-    elbv2 = boto3.client('elbv2')
+    eb_client = aws_clients['eb']
+    elbv2_client = aws_clients['elbv2']
     
-    envs = eb.describe_environments(EnvironmentNames=[env_name], IncludeDeleted=False)['Environments']
+    envs = eb_client.describe_environments(EnvironmentNames=[env_name], IncludeDeleted=False)['Environments']
     if not envs:
         raise DeploymentError(f"Environment {env_name} not found")
 
-    for lb in elbv2.describe_load_balancers()['LoadBalancers']:
+    for lb in elbv2_client.describe_load_balancers()['LoadBalancers']:
         if lb['Type'].lower() != 'application':
             continue
         
-        tags = elbv2.describe_tags(ResourceArns=[lb['LoadBalancerArn']])['TagDescriptions'][0]['Tags']
+        tags = elbv2_client.describe_tags(ResourceArns=[lb['LoadBalancerArn']])['TagDescriptions'][0]['Tags']
         if not any(t['Key'] == 'elasticbeanstalk:environment-name' and t['Value'] == env_name for t in tags):
             continue
         
-        listeners = elbv2.describe_listeners(LoadBalancerArn=lb['LoadBalancerArn'])['Listeners']
+        listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb['LoadBalancerArn'])['Listeners']
         https_listener = next((l for l in listeners if l['Port'] == 443), None)
         if https_listener:
             return https_listener['ListenerArn'], lb['LoadBalancerArn']
@@ -168,10 +145,10 @@ def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
     return None, None
 
 @aws_handler
-def find_target_group_arn(load_balancer_arn: str) -> str:
+def find_target_group_arn(load_balancer_arn: str, aws_clients: Dict) -> str:
     """Get target group ARN for the load balancer."""
-    elbv2 = boto3.client('elbv2')
-    target_groups = elbv2.describe_target_groups(LoadBalancerArn=load_balancer_arn)['TargetGroups']
+    elbv2_client = aws_clients['elbv2']
+    target_groups = elbv2_client.describe_target_groups(LoadBalancerArn=load_balancer_arn)['TargetGroups']
     if not target_groups:
         raise DeploymentError("No target groups found for load balancer")
     return target_groups[0]['TargetGroupArn']
@@ -218,17 +195,20 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
     if not oidc_config['client_secret']:
         raise DeploymentError("OIDC client secret is required")
     
+    # Get AWS clients
+    aws_clients = get_aws_clients(config)
+    elbv2_client = aws_clients['elbv2']
+        
     # Find the HTTPS listener
-    listener_arn, load_balancer_arn = find_listener_arn(env_name)
+    listener_arn, load_balancer_arn = find_listener_arn(env_name, aws_clients)
     if not listener_arn:
         raise DeploymentError("Could not find HTTPS listener")
     
     # Get domain from the certificate
-    elbv2_client = boto3.client('elbv2')
     domain = get_domain_from_listener(elbv2_client, listener_arn)
     
     # Get target group ARN
-    target_group_arn = find_target_group_arn(load_balancer_arn)
+    target_group_arn = find_target_group_arn(load_balancer_arn, aws_clients)
     
     # Clean existing rules
     click.echo("Removing existing listener rules...")

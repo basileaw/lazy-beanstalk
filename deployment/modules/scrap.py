@@ -3,43 +3,18 @@
 """Clean up Elastic Beanstalk environment and associated resources."""
 
 import shutil
-import yaml
-from pathlib import Path
-from typing import Dict, Optional
-import boto3
+from typing import Dict
 from botocore.exceptions import ClientError
 
 from . import common
-from .common import DeploymentError
-
-def get_project_name() -> str:
-    """Retrieve the project name from the root folder."""
-    return Path(__file__).parent.parent.parent.name
-
-def load_config() -> Dict:
-    """Load configuration from YAML and replace placeholders."""
-    config_path = Path(__file__).parent.parent / "configurations" / "config.yml"
-    try:
-        config = yaml.safe_load(config_path.read_text())
-        project_name = get_project_name()
-
-        # Replace placeholders with actual values
-        def replace_placeholders(obj):
-            if isinstance(obj, str):
-                return obj.replace('${PROJECT_NAME}', project_name)
-            elif isinstance(obj, dict):
-                return {k: replace_placeholders(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [replace_placeholders(i) for i in obj]
-            return obj
-
-        return replace_placeholders(config)
-    except Exception as e:
-        raise DeploymentError(f"Failed to load config: {e}")
+from .configure import (
+    get_project_name, get_project_root,
+    get_aws_clients
+)
 
 def cleanup_local_config() -> None:
     """Remove local EB CLI configuration."""
-    config_dir = Path(__file__).parent.parent.parent / '.elasticbeanstalk'
+    config_dir = get_project_root() / '.elasticbeanstalk'
     if config_dir.exists():
         shutil.rmtree(config_dir)
         print("Removed .elasticbeanstalk configuration directory")
@@ -133,7 +108,7 @@ def cleanup_https(eb_client, elbv2_client, r53_client, config: Dict, project_nam
     try:
         if cert_arn:  # Only proceed if we have a certificate ARN
             # Get the domain from the certificate
-            acm_client = boto3.client('acm')
+            acm_client = get_aws_clients(config)['acm']
             cert = acm_client.describe_certificate(CertificateArn=cert_arn)['Certificate']
             domain = cert['DomainName'].replace('*', project_name)
             
@@ -219,10 +194,15 @@ def cleanup_s3_bucket(s3_client, config: Dict) -> None:
 def cleanup_application(config: Dict) -> None:
     """Clean up all Elastic Beanstalk resources."""
     project_name = get_project_name()
-    session = boto3.Session(region_name=config['aws']['region'])
-    eb_client = session.client('elasticbeanstalk')
-    elbv2_client = session.client('elbv2')
-    r53_client = session.client('route53')
+    
+    # Get AWS clients
+    aws_clients = get_aws_clients(config)
+    eb_client = aws_clients['eb']
+    elbv2_client = aws_clients['elbv2']
+    r53_client = aws_clients['r53']
+    iam_client = aws_clients['iam']
+    s3_client = aws_clients['s3']
+    
     env_name = config['application']['environment']
 
     # Clean up OIDC rules first (before we remove the HTTPS listener)
@@ -249,7 +229,6 @@ def cleanup_application(config: Dict) -> None:
     if not common.check_env_exists(eb_client):
         print("No active environments found, cleaning up resources...")
         
-        iam_client = session.client('iam')
         cleanup_instance_profile(iam_client, config)
         common.manage_iam_role(
             iam_client,
@@ -258,7 +237,7 @@ def cleanup_application(config: Dict) -> None:
             action='cleanup'
         )
         
-        cleanup_s3_bucket(session.client('s3'), config)
+        cleanup_s3_bucket(s3_client, config)
 
         try:
             eb_client.delete_application(

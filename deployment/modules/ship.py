@@ -1,4 +1,5 @@
 # modules/ship.py
+
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
 """
@@ -7,34 +8,88 @@ import os
 import tempfile
 import zipfile
 import time
+import fnmatch
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Set, Optional, Tuple
-import boto3
 import yaml
 from botocore.exceptions import ClientError
 
 from . import common
 from .common import DeploymentError
-
-def get_project_name() -> str:
-    """Return the name of the root-level folder (project)."""
-    return Path(__file__).parent.parent.parent.name
+from .configure import (
+    get_project_name, get_project_root, get_aws_clients, 
+    get_eb_cli_platform_name, ConfigurationError
+)
 
 def create_app_bundle() -> str:
     """Create a ZIP archive of application files based on .ebignore."""
-    project_root = Path(__file__).parent.parent.parent
-    include_patterns = {
-        line[1:].strip() for line in (project_root / '.ebignore').read_text().splitlines()
-        if line.strip() and not line.startswith('#') and line.startswith('!')
-    }
+    project_root = get_project_root()
+    ebignore_path = project_root / '.ebignore'
     
+    # Parse .ebignore file
+    patterns = []
+    negated_patterns = []
+    if ebignore_path.exists():
+        with open(ebignore_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if line.startswith('!'):
+                        negated_patterns.append(line[1:])
+                    else:
+                        patterns.append(line)
+    
+    # Create bundle
     bundle_path = Path(tempfile.gettempdir()) / f'app_bundle_{datetime.now():%Y%m%d_%H%M%S}.zip'
+    file_count = 0
+    
     with zipfile.ZipFile(bundle_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for pattern in include_patterns:
-            for path in project_root.glob(pattern.rstrip('/') + '/**/*' if pattern.endswith('/') else pattern):
-                if path.is_file():
-                    zipf.write(path, path.relative_to(project_root))
+        for root, _, files in os.walk(str(project_root)):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+                rel_path = os.path.relpath(file_path, str(project_root))
+                
+                # Convert Windows paths to forward slashes for pattern matching
+                rel_path_normalized = rel_path.replace(os.sep, '/')
+                
+                # Check if file should be excluded
+                excluded = False
+                for pattern in patterns:
+                    # Handle directory patterns ending with slash
+                    if pattern.endswith('/'):
+                        pattern = pattern + '**'
+                    # Handle single directory matching
+                    if '/' not in pattern and '/' in rel_path_normalized:
+                        dirs = rel_path_normalized.split('/')
+                        if any(fnmatch.fnmatch(d, pattern) for d in dirs):
+                            excluded = True
+                            break
+                    # Direct pattern match
+                    elif fnmatch.fnmatch(rel_path_normalized, pattern):
+                        excluded = True
+                        break
+                    # Handle ** patterns
+                    elif '**' in pattern:
+                        parts = pattern.split('**')
+                        if (pattern.startswith('**') and rel_path_normalized.endswith(parts[1])) or \
+                           (pattern.endswith('**') and rel_path_normalized.startswith(parts[0])):
+                            excluded = True
+                            break
+                
+                # Check if excluded file should be re-included
+                if excluded:
+                    for pattern in negated_patterns:
+                        if fnmatch.fnmatch(rel_path_normalized, pattern):
+                            excluded = False
+                            break
+                
+                # Add file if not excluded
+                if not excluded and not rel_path == '.ebignore':
+                    zipf.write(file_path, rel_path)
+                    file_count += 1
+    
+    print(f"Created application bundle with {file_count} files")
     return str(bundle_path)
 
 @common.aws_handler
@@ -143,35 +198,6 @@ def restore_env_state(elbv2_client, state: Dict[str, Any], project_name: str) ->
             project_name
         )
 
-def get_eb_cli_platform_name(platform: str) -> str:
-    """
-    Convert AWS solution stack name to EB CLI platform name format.
-    
-    Args:
-        platform: AWS solution stack name (e.g. '64bit Amazon Linux 2023 v4.0.1 running Docker')
-    
-    Returns:
-        EB CLI compatible platform name (e.g. 'Docker running on 64bit Amazon Linux 2023')
-    """
-    platform_parts = platform.split(" ")
-    default_platform = "Docker"
-    
-    # Try to construct a more specific platform name based on the solution stack
-    if "Docker" in platform:
-        # Look for common patterns in platform names
-        if "Amazon Linux" in platform:
-            # Find the OS details (e.g., "64bit Amazon Linux 2023")
-            os_parts = []
-            for i, part in enumerate(platform_parts):
-                if part == "Amazon" and i+2 < len(platform_parts):
-                    os_parts = platform_parts[i-1:i+3]  # Get bits, Amazon, Linux, version
-                    break
-            
-            if os_parts:
-                default_platform = f"Docker running on {' '.join(os_parts)}"
-    
-    return default_platform
-
 def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], version: str, project_name: str) -> None:
     """Create or update Elastic Beanstalk environment."""
     env_name = config['application']['environment']
@@ -270,16 +296,17 @@ def deploy_application(config: Dict[str, Any]) -> None:
     project_name = get_project_name()
     region = config['aws']['region']
     platform = config['aws']['platform']
-    project_root = Path(__file__).parent.parent.parent
+    project_root = get_project_root()
     
     print(f"Deploying to region: {region}")
     print(f"Using platform: {platform}")
     
-    session = boto3.Session(region_name=region)
-    eb_client = session.client('elasticbeanstalk')
-    iam_client = session.client('iam')
-    s3_client = session.client('s3')
-    elbv2_client = session.client('elbv2')
+    # Get AWS clients
+    aws_clients = get_aws_clients(config)
+    eb_client = aws_clients['eb']
+    iam_client = aws_clients['iam']
+    s3_client = aws_clients['s3']
+    elbv2_client = aws_clients['elbv2']
     
     # Create EB CLI config file
     create_eb_cli_config(config, project_root)

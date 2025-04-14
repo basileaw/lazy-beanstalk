@@ -1,5 +1,5 @@
 # Dockerfile
-FROM python:3.14
+FROM python:3.12-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -7,15 +7,18 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-# Copy installation script first (for better layer caching)
-COPY deployment/install_deps.py /install_deps.py
+# Install Poetry
+RUN pip install --no-cache-dir poetry
 
-# Copy necessary files for detection and installation
-COPY pyproject.toml poetry.lock* requirements.txt* Pipfile* Pipfile.lock* pdm.lock* .pdm.toml* environment.yml* conda-lock.yml* hatch.toml* ./
+# Copy dependency definition files
+COPY pyproject.toml poetry.lock* ./
+
+# Configure Poetry and install dependencies
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --only main --no-root
+
+# Copy application files
 COPY app/ ./
-
-# Run the dependency detection and installation
-RUN python /install_deps.py
 
 # Expose port
 EXPOSE 8000

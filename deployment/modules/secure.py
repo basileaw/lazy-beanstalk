@@ -1,19 +1,16 @@
+# secure.py 
+
 """
 Secure your Elastic Beanstalk environment via HTTPS using ACM and Route 53.
 Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
 """
 
 import time
-from pathlib import Path
 from typing import Dict
-import boto3
 
 from . import common
 from .common import DeploymentError
-
-def get_project_name() -> str:
-    """Return the name of the root-level folder (project)."""
-    return Path(__file__).parent.parent.parent.name
+from .configure import get_project_name, get_aws_clients
 
 @common.aws_handler
 def pick_certificate(acm_client) -> str:
@@ -156,14 +153,14 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     env_name = config['application']['environment']
     
     print("\nInitializing HTTPS configuration...")
-    session = boto3.Session(region_name=region)
     
-    # Initialize AWS clients
-    acm_client = session.client('acm')
-    r53_client = session.client('route53')
-    eb_client = session.client('elasticbeanstalk')
-    elbv2_client = session.client('elbv2')
-    ec2_client = session.client('ec2')
+    # Get AWS clients
+    aws_clients = get_aws_clients(config)
+    acm_client = aws_clients['acm']
+    r53_client = aws_clients['r53']
+    eb_client = aws_clients['eb']
+    elbv2_client = aws_clients['elbv2']
+    ec2_client = aws_clients['ec2']
 
     # Get certificate details
     cert = acm_client.describe_certificate(CertificateArn=cert_arn)['Certificate']
