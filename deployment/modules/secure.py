@@ -27,16 +27,12 @@ def pick_certificate(acm_client=None) -> str:
     certs = acm_client.list_certificates(CertificateStatuses=['ISSUED'])['CertificateSummaryList']
     
     if not certs:
-        ProgressIndicator.complete("failed")
         raise DeploymentError("No ISSUED certificates found in ACM.")
 
     if len(certs) == 1:
         cert = certs[0]
-        ProgressIndicator.complete("found 1 certificate")
         logger.info(f"Using certificate: {cert['DomainName']} ({cert['CertificateArn']})")
         return cert['CertificateArn']
-
-    ProgressIndicator.complete(f"found {len(certs)} certificates")
     print("\nMultiple ISSUED certificates found. Choose one:")
     
     for i, cert in enumerate(certs, 1):
@@ -65,12 +61,11 @@ def get_hosted_zone_id(domain: str) -> str:
     matches = [z for z in zones if domain.endswith(z['Name'].rstrip('.'))]
     
     if not matches:
-        ProgressIndicator.complete("failed")
         raise DeploymentError(f"No hosted zone found for domain {domain}")
     
     # Return the most specific matching zone
     best_zone = max(matches, key=lambda z: len(z['Name']))
-    ProgressIndicator.complete(f"found zone: {best_zone['Name']}")
+    ProgressIndicator.complete(f"Found zone: {best_zone['Name']}")
     
     return best_zone['Id']
 
@@ -135,9 +130,9 @@ def ensure_security_group_https(lb_arn: str) -> None:
             sg_updates += 1
     
     if sg_updates > 0:
-        ProgressIndicator.complete(f"added {sg_updates} rules")
+        ProgressIndicator.complete(f"Added {sg_updates} rules")
     else:
-        ProgressIndicator.complete("already configured")
+        ProgressIndicator.complete("Already configured")
 
 @common.aws_handler
 def create_dns_record(zone_id: str, domain: str, lb_dns: str) -> dict:
@@ -177,7 +172,6 @@ def wait_for_dns_sync(change_id: str) -> None:
     while True:
         status = r53_client.get_change(Id=change_id)['ChangeInfo']['Status']
         if status == 'INSYNC':
-            ProgressIndicator.complete("synchronized")
             break
         ProgressIndicator.step()
         time.sleep(10)
@@ -201,10 +195,8 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     ProgressIndicator.start("Locating environment load balancer")
     lb_arn = common.find_environment_load_balancer(env_name)
     if not lb_arn:
-        ProgressIndicator.complete("failed")
         raise DeploymentError("No load balancer found for environment")
     
-    ProgressIndicator.complete("found")
     elbv2_client = ClientManager.get_client('elbv2')
     lb = elbv2_client.describe_load_balancers(LoadBalancerArns=[lb_arn])['LoadBalancers'][0]
 

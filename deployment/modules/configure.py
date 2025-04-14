@@ -378,7 +378,6 @@ class ConfigurationManager:
             logger.debug(f"Found {len(docker_stacks)} Docker solution stacks")
             
             if not docker_stacks:
-                ProgressIndicator.complete("failed")
                 raise ConfigurationError("No Docker solution stacks found in this region")
             
             # If we have a platform hint, filter for matching stacks
@@ -394,7 +393,6 @@ class ConfigurationManager:
             if al2023_stacks:
                 # Sort to get the latest version
                 latest_stack = sorted(al2023_stacks, reverse=True)[0]
-                ProgressIndicator.complete("done")
                 logger.info(f"Using latest Amazon Linux 2023 Docker stack: {latest_stack}")
                 return latest_stack
             
@@ -403,18 +401,15 @@ class ConfigurationManager:
             
             if al2_stacks:
                 latest_stack = sorted(al2_stacks, reverse=True)[0]
-                ProgressIndicator.complete("done")
                 logger.info(f"Using latest Amazon Linux 2 Docker stack: {latest_stack}")
                 return latest_stack
             
             # If all else fails, use the latest Docker stack available
             latest_stack = sorted(docker_stacks, reverse=True)[0]
-            ProgressIndicator.complete("done")
             logger.info(f"Using Docker stack: {latest_stack}")
             return latest_stack
             
         except Exception as e:
-            ProgressIndicator.complete("failed")
             logger.error(f"Could not determine Docker platform: {str(e)}")
             raise ConfigurationError(f"Unable to determine Docker platform: {str(e)}")
             

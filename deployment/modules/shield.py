@@ -163,8 +163,7 @@ def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
     if not https_listener:
         ProgressIndicator.complete("HTTPS not configured")
         raise DeploymentError("HTTPS listener not found. Run 'secure' command first.")
-    
-    ProgressIndicator.complete("found")
+
     return https_listener['ListenerArn'], env_lb['LoadBalancerArn']
 
 @aws_handler
@@ -177,8 +176,7 @@ def find_target_group_arn(load_balancer_arn: str) -> str:
     if not target_groups:
         ProgressIndicator.complete("not found")
         raise DeploymentError("No target groups found for load balancer")
-    
-    ProgressIndicator.complete("found")
+
     return target_groups[0]['TargetGroupArn']
 
 def get_client_secret(secret: Optional[str] = None) -> str:
@@ -245,9 +243,9 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
             rules_removed += 1
     
     if rules_removed > 0:
-        ProgressIndicator.complete(f"removed {rules_removed} rules")
+        logger.info(f"Removed {rules_removed} rules")
     else:
-        ProgressIndicator.complete("no rules to remove")
+       logger.info(f"No rules to remove")
     
     # Configure authentication action
     ProgressIndicator.start("Configuring OIDC authentication")
@@ -293,7 +291,6 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
             {'Type': 'forward', 'TargetGroupArn': target_group_arn, 'Order': 2}
         ]
     )
-    ProgressIndicator.complete("configured")
 
     # Configure HTTP to HTTPS redirect
     ProgressIndicator.start("Configuring HTTP to HTTPS redirect")
@@ -314,10 +311,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
                 }
             }]
         )
-        ProgressIndicator.complete("configured")
     else:
         ProgressIndicator.complete("HTTP listener not found")
     
     logger.info(f"OIDC authentication successfully configured for {domain}")
-    print(f"\nOIDC authentication successfully configured for {domain}")
-    print("Users will now be required to authenticate via your OIDC provider.")

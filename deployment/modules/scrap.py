@@ -17,7 +17,6 @@ def cleanup_local_config() -> None:
     if config_dir.exists():
         ProgressIndicator.start("Removing .elasticbeanstalk configuration directory")
         shutil.rmtree(config_dir)
-        ProgressIndicator.complete("removed")
         logger.info("Removed .elasticbeanstalk configuration directory")
 
 @common.aws_handler
@@ -53,14 +52,13 @@ def cleanup_oidc(env_name: str) -> None:
             logger.info("No OIDC authentication rules found")
             return
         
-        ProgressIndicator.complete(f"found {len(oidc_rules)} rules")
+        ProgressIndicator.complete(f"Found {len(oidc_rules)} rules")
         
         # Delete OIDC rules
         ProgressIndicator.start("Removing OIDC authentication rules")
         for rule in oidc_rules:
             logger.info(f"Removing rule: {rule['RuleArn']}")
             elbv2_client.delete_rule(RuleArn=rule['RuleArn'])
-        ProgressIndicator.complete("removed")
         
         # Restore default action to forward traffic
         # Get target group
@@ -78,7 +76,6 @@ def cleanup_oidc(env_name: str) -> None:
             ProgressIndicator.complete("restored")
             logger.info("OIDC authentication rules removed successfully")
         else:
-            ProgressIndicator.complete("failed")
             logger.warning("Could not restore default action: no target groups found")
         
     except ClientError as e:
@@ -106,8 +103,6 @@ def cleanup_https(env_name: str, project_name: str) -> None:
     if not is_https_enabled:
         ProgressIndicator.complete("not enabled")
         return
-
-    ProgressIndicator.complete("found")
     logger.info("Found HTTPS configuration, cleaning up")
     
     # Clean up HTTPS listener
@@ -117,7 +112,6 @@ def cleanup_https(env_name: str, project_name: str) -> None:
         https_listener = next((l for l in listeners if l['Port'] == 443), None)
         if https_listener:
             elbv2_client.delete_listener(ListenerArn=https_listener['ListenerArn'])
-            ProgressIndicator.complete("removed")
             logger.info("Removed HTTPS listener")
         else:
             ProgressIndicator.complete("not found")
@@ -163,7 +157,6 @@ def cleanup_https(env_name: str, project_name: str) -> None:
                             }]
                         }
                     )
-                    ProgressIndicator.complete("removed")
                 else:
                     ProgressIndicator.complete("no matching record")
             else:
@@ -193,7 +186,6 @@ def cleanup_instance_profile(config: Dict) -> None:
 
         # Delete profile
         iam_client.delete_instance_profile(InstanceProfileName=profile_name)
-        ProgressIndicator.complete("removed")
         logger.info(f"Deleted instance profile: {profile_name}")
     except ClientError as e:
         if e.response['Error']['Code'] != 'NoSuchEntity':
@@ -231,7 +223,7 @@ def cleanup_s3_bucket(config: Dict) -> None:
 
         # Delete bucket
         s3_client.delete_bucket(Bucket=bucket)
-        ProgressIndicator.complete(f"removed {object_count} objects")
+        logger.info(f"Removed {object_count} objects")
         logger.info(f"Deleted S3 bucket: {bucket}")
     except ClientError as e:
         if e.response['Error']['Code'] not in ['NoSuchBucket', 'NoSuchKey']:
@@ -263,7 +255,6 @@ def cleanup_application(config: Dict) -> None:
         )['Environments'])
 
         if env_exists:
-            ProgressIndicator.complete("found")
             logger.info(f"Terminating environment: {env_name}")
             eb_client.terminate_environment(EnvironmentName=env_name)
             common.wait_for_env_status(env_name, 'Terminated')
@@ -277,7 +268,6 @@ def cleanup_application(config: Dict) -> None:
     no_other_envs = not common.check_env_exists()
     
     if no_other_envs:
-        ProgressIndicator.complete("none found")
         logger.info("No active environments found, cleaning up shared resources")
         
         # Clean up IAM resources
@@ -304,7 +294,6 @@ def cleanup_application(config: Dict) -> None:
         except ClientError:
             ProgressIndicator.complete("error or not found")
     else:
-        ProgressIndicator.complete("found other environments")
         logger.info("Other environments still active. Skipping resource cleanup.")
 
     # Remove local configuration

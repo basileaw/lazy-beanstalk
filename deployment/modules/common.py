@@ -85,7 +85,6 @@ def wait_for_env_status(env_name: str, target: str) -> None:
                 ProgressIndicator.complete(f"reached {target} state")
                 break
             if status == 'Failed':
-                ProgressIndicator.complete("failed")
                 raise DeploymentError(f"Environment failed to reach {target} status")
                 
             # Show progress

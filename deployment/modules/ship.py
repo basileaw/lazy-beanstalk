@@ -151,15 +151,12 @@ def wait_for_version(app_name: str, version: str) -> None:
         )['ApplicationVersions']
         
         if not versions:
-            ProgressIndicator.complete("failed")
             raise DeploymentError(f"Version {version} not found")
         
         status = versions[0]['Status']
         if status == 'PROCESSED':
-            ProgressIndicator.complete("done")
             break
         elif status == 'FAILED':
-            ProgressIndicator.complete("failed")
             raise DeploymentError(f"Version {version} processing failed")
             
         ProgressIndicator.step()
@@ -381,7 +378,6 @@ def deploy_application(config: Dict[str, Any]) -> None:
     ProgressIndicator.start(f"Uploading application bundle to S3")
     with open(bundle, 'rb') as f:
         s3_client.upload_fileobj(f, bucket, key)
-    ProgressIndicator.complete("done")
     
     # Clean up local bundle
     os.remove(bundle)
