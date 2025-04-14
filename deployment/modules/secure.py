@@ -10,7 +10,7 @@ from typing import Dict
 
 from . import common
 from .common import DeploymentError
-from .configure import (
+from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger
 )
 

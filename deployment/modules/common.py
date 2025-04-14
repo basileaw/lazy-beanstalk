@@ -9,7 +9,7 @@ from datetime import datetime
 from botocore.exceptions import ClientError
 from typing import Dict, Set, Optional, List, Callable, Tuple, Any
 
-from .configure import (
+from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator,
     load_policy, logger
 )

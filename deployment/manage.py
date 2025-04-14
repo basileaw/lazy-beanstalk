@@ -8,7 +8,7 @@ import sys
 import click
 from typing import Optional
 
-from modules.configure import (
+from deployment.modules.setup import (
     ConfigurationManager, ClientManager, logger,
     ConfigurationError
 )

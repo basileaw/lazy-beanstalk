@@ -7,7 +7,7 @@ from typing import Dict
 from botocore.exceptions import ClientError
 
 from . import common
-from .configure import (
+from .setup import (
     ConfigurationManager, ClientManager, ProgressIndicator, logger
 )
 
