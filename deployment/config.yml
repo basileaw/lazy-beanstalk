@@ -1,6 +1,6 @@
 # configurations/config.yml
 
-# AWS Regional Configuration
+## AWS Regional Configuration
 aws:
   region: ${AWS_REGION}
   platform: ${LATEST_DOCKER_PLATFORM}
@@ -9,13 +9,13 @@ aws:
     Project: ${PROJECT_NAME}
     ManagedBy: deployment-scripts
 
-# Application Configuration
+## Application Configuration
 application:
   name: ${PROJECT_NAME}
   environment: ${PROJECT_NAME}-env
   description: "${PROJECT_NAME} Application"
 
-# Instance Configuration
+## Instance Configuration
 instance:
   type: t4g.nano
   elb_type: application
@@ -23,9 +23,9 @@ instance:
     min_instances: 1
     max_instances: 1
 
-# IAM Configuration
+## IAM Configuration
 iam:
-  # Service role for Elastic Beanstalk
+  ### Service role for Elastic Beanstalk
   service_role_name: ${PROJECT_NAME}-eb-role
   service_role_policies:
     trust_policy: eb-trust-policy.json
@@ -45,9 +45,9 @@ iam:
     custom_policies:
       - bedrock.json
 
-# OIDC Configuration
-# Required environment variables: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER,
-# OIDC_AUTH_ENDPOINT, OIDC_TOKEN_ENDPOINT, OIDC_USERINFO_ENDPOINT
+## OIDC Configuration
+### Required environment variables: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER,
+### OIDC_AUTH_ENDPOINT, OIDC_TOKEN_ENDPOINT, OIDC_USERINFO_ENDPOINT
 oidc:
   client_id: ${OIDC_CLIENT_ID}
   client_secret: ${OIDC_CLIENT_SECRET}
@@ -57,13 +57,13 @@ oidc:
     token: ${OIDC_TOKEN_ENDPOINT}
     userinfo: ${OIDC_USERINFO_ENDPOINT}
   
-  # Default session settings
+  ### Default session settings
   session:
     cookie_name: federate_id_token
     timeout: 36000
     scope: openid
 
-# EB CLI Configuration
+## EB CLI Configuration
 elasticbeanstalk_cli:
   branch-defaults:
     main:

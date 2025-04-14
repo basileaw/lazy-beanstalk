@@ -289,7 +289,6 @@ def cleanup_application(config: Dict) -> None:
                 ApplicationName=config['application']['name'],
                 TerminateEnvByForce=True
             )
-            ProgressIndicator.complete("deleted")
             logger.info(f"Deleted application: {config['application']['name']}")
         except ClientError:
             ProgressIndicator.complete("error or not found")
