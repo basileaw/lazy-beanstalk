@@ -1,4 +1,4 @@
-# modules/common.py
+# modules/support.py
 
 """Common utilities for Elastic Beanstalk deployment operations."""
 
@@ -174,13 +174,32 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = 'create') -> N
         sts_client = ClientManager.get_client('sts')
         account = sts_client.get_caller_identity()['Account']
         
-        for policy_file in policies.get('custom_policies', []):
+        # Get list of policy files - either from config or auto-discover
+        custom_policy_files = []
+        
+        # Check if custom_policies is explicitly defined in config
+        if 'custom_policies' in policies:
+            custom_policy_files = policies['custom_policies']
+            logger.info(f"Using {len(custom_policy_files)} explicitly configured custom policies")
+        else:
+            # Auto-discover custom policies from the policies directory
+            custom_policy_files = ConfigurationManager.get_custom_policies()
+            if custom_policy_files:
+                logger.info(f"Auto-discovered {len(custom_policy_files)} custom policies from policies directory")
+            else:
+                logger.info("No custom policies discovered in policies directory")
+        
+        for policy_file in custom_policy_files:
             name = f"{role_name}-{policy_file.replace('.json', '')}"
             policy_arn = f"arn:aws:iam::{account}:policy/{name}"
             
             # Load the policy document
             logger.info(f"Loading policy from {policy_file}")
-            policy_doc = load_policy(policy_file)
+            try:
+                policy_doc = load_policy(policy_file)
+            except Exception as e:
+                logger.error(f"Failed to load policy {policy_file}: {e}")
+                continue
             
             # Check if policy exists
             policy_exists = False
@@ -259,18 +278,39 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = 'create') -> N
                 logger.warning(f"Error detaching policy {arn} from role {role_name}: {e}")
                 continue
 
-        for policy_file in policies.get('custom_policies', []):
+        # Get custom policies to clean up - either from config or auto-discover
+        custom_policy_files = []
+        
+        # Try config first
+        if 'custom_policies' in policies:
+            custom_policy_files = policies['custom_policies']
+        
+        # If no custom policies in config or empty list, auto-discover
+        if not custom_policy_files:
+            custom_policy_files = ConfigurationManager.get_custom_policies()
+            
+        for policy_file in custom_policy_files:
             try:
                 name = f"{role_name}-{policy_file.replace('.json', '')}"
                 policy_arn = f"arn:aws:iam::{account}:policy/{name}"
                 logger.info(f"Detaching and deleting policy {name}")
-                iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
-                logger.info(f"Detached policy {name} from role {role_name}")
                 
-                # Delete the policy
-                iam_client.delete_policy(PolicyArn=policy_arn)
-                logger.info(f"Deleted policy {name}")
-            except ClientError as e:
+                # Try to detach the policy
+                try:
+                    iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+                    logger.info(f"Detached policy {name} from role {role_name}")
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'NoSuchEntity':
+                        logger.warning(f"Error detaching policy {name}: {e}")
+                
+                # Try to delete the policy
+                try:
+                    iam_client.delete_policy(PolicyArn=policy_arn)
+                    logger.info(f"Deleted policy {name}")
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'NoSuchEntity':
+                        logger.warning(f"Error deleting policy {name}: {e}")
+            except Exception as e:
                 logger.warning(f"Error cleaning up policy {policy_file}: {e}")
                 continue
 

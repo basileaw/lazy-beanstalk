@@ -1,4 +1,4 @@
-# configure.py 
+# setup.py 
 
 """
 Configuration utilities for Elastic Beanstalk deployment operations.
@@ -9,9 +9,10 @@ import re
 import os
 import yaml
 import boto3
+import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Set up standardized logging
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
@@ -112,6 +113,10 @@ class ConfigurationManager:
     _project_root = None
     _project_name = None
     _solution_stack_cache = None
+    _custom_policies_cache = None
+    
+    # Trust policies should be excluded from automatic attachment
+    _TRUST_POLICY_NAMES = {'eb-trust-policy.json', 'ec2-trust-policy.json'}
     
     @classmethod
     def get_project_root(cls) -> Path:
@@ -151,6 +156,63 @@ class ConfigurationManager:
         if not policy_path.exists():
             raise ConfigurationError(f"Policy file not found: {policy_path}")
         return policy_path
+    
+    @classmethod
+    def get_custom_policies(cls, exclude_patterns: Optional[List[str]] = None) -> List[str]:
+        """
+        Scan the policies directory and return all JSON files that aren't trust policies.
+        
+        Args:
+            exclude_patterns: Optional list of patterns to exclude (uses simple string matching)
+            
+        Returns:
+            List of policy file names (not full paths)
+        """
+        if cls._custom_policies_cache is not None:
+            return cls._custom_policies_cache.copy()
+        
+        policies_dir = cls.get_policies_dir()
+        if not policies_dir.exists():
+            logger.warning(f"Policies directory not found: {policies_dir}")
+            return []
+        
+        # Determine exclusions
+        excluded_files = set(cls._TRUST_POLICY_NAMES)
+        if exclude_patterns:
+            for pattern in exclude_patterns:
+                for file_path in policies_dir.glob(pattern):
+                    excluded_files.add(file_path.name)
+                    
+        # Get all JSON files in the policies directory
+        all_policies = []
+        invalid_files = []
+        
+        for file_path in policies_dir.glob('*.json'):
+            if file_path.name not in excluded_files:
+                # Validate JSON before including
+                try:
+                    with open(file_path, 'r') as f:
+                        json.load(f)
+                    all_policies.append(file_path.name)
+                except json.JSONDecodeError:
+                    invalid_files.append(file_path.name)
+                    logger.warning(f"Skipping invalid JSON file: {file_path.name}")
+        
+        if invalid_files:
+            logger.warning(f"Found {len(invalid_files)} invalid policy files: {', '.join(invalid_files)}")
+            
+        # Sort for consistent ordering
+        all_policies.sort()
+        
+        # Cache the result
+        cls._custom_policies_cache = all_policies
+        
+        return all_policies
+    
+    @classmethod
+    def is_trust_policy(cls, policy_name: str) -> bool:
+        """Check if a policy name is a trust policy."""
+        return policy_name in cls._TRUST_POLICY_NAMES
     
     @classmethod
     def get_eb_config_path(cls) -> Optional[Path]:
@@ -247,7 +309,6 @@ class ConfigurationManager:
     @classmethod
     def load_policy(cls, filename: str) -> Dict:
         """Load a JSON policy file."""
-        import json
         try:
             policy_path = cls.get_policy_path(filename)
             policy_content = policy_path.read_text()

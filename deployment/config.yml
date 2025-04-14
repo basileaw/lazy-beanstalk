@@ -33,7 +33,7 @@ iam:
       - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
       - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
   
-  # Instance profile and role for EC2 instances
+  ### Instance profile and role for EC2 instances
   instance_profile_name: ${PROJECT_NAME}-ec2-profile
   instance_role_name: ${PROJECT_NAME}-ec2-role
   instance_role_policies:
@@ -42,8 +42,15 @@ iam:
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
-    custom_policies:
-      - bedrock.json
+    #### The custom_policies section below is optional.
+    #### If omitted, all JSON files in the policies/ directory 
+    #### (except trust policies) will be automatically attached.
+    ####
+    #### To explicitly specify policies to attach, uncomment and customize:
+    ####
+    #### custom_policies:
+    ####   - bedrock.json
+    ####   - s3-access.json
 
 ## OIDC Configuration
 ### Required environment variables: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER,
