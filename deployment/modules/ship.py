@@ -143,6 +143,35 @@ def restore_env_state(elbv2_client, state: Dict[str, Any], project_name: str) ->
             project_name
         )
 
+def get_eb_cli_platform_name(platform: str) -> str:
+    """
+    Convert AWS solution stack name to EB CLI platform name format.
+    
+    Args:
+        platform: AWS solution stack name (e.g. '64bit Amazon Linux 2023 v4.0.1 running Docker')
+    
+    Returns:
+        EB CLI compatible platform name (e.g. 'Docker running on 64bit Amazon Linux 2023')
+    """
+    platform_parts = platform.split(" ")
+    default_platform = "Docker"
+    
+    # Try to construct a more specific platform name based on the solution stack
+    if "Docker" in platform:
+        # Look for common patterns in platform names
+        if "Amazon Linux" in platform:
+            # Find the OS details (e.g., "64bit Amazon Linux 2023")
+            os_parts = []
+            for i, part in enumerate(platform_parts):
+                if part == "Amazon" and i+2 < len(platform_parts):
+                    os_parts = platform_parts[i-1:i+3]  # Get bits, Amazon, Linux, version
+                    break
+            
+            if os_parts:
+                default_platform = f"Docker running on {' '.join(os_parts)}"
+    
+    return default_platform
+
 def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], version: str, project_name: str) -> None:
     """Create or update Elastic Beanstalk environment."""
     env_name = config['application']['environment']
@@ -184,11 +213,64 @@ def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], versio
     if state:
         restore_env_state(elbv2_client, state, project_name)
 
+def create_eb_cli_config(config: Dict[str, Any], project_root: Path) -> None:
+    """
+    Create EB CLI configuration file from the main config.yml.
+    
+    Args:
+        config: The loaded and processed config dictionary
+        project_root: The root path of the project
+    """
+    eb_dir = project_root / '.elasticbeanstalk'
+    eb_dir.mkdir(exist_ok=True)
+    
+    # Check if elasticbeanstalk_cli section exists
+    if 'elasticbeanstalk_cli' not in config:
+        print("Warning: No elasticbeanstalk_cli section found in config.yml")
+        # Use the old method to generate the config
+        eb_config = {
+            'branch-defaults': {
+                'main': {
+                    'environment': config['application']['environment'],
+                    'group_suffix': None
+                }
+            },
+            'global': {
+                'application_name': config['application']['name'],
+                'branch': None,
+                'default_ec2_keyname': None,
+                'default_platform': get_eb_cli_platform_name(config['aws']['platform']),
+                'default_region': config['aws']['region'],
+                'include_git_submodules': True,
+                'instance_profile': None,
+                'platform_name': None,
+                'platform_version': None,
+                'profile': None,
+                'repository': None,
+                'sc': 'git',
+                'workspace_type': 'Application'
+            }
+        }
+    else:
+        # Use the elasticbeanstalk_cli section from the config
+        eb_config = config['elasticbeanstalk_cli']
+        
+        # Check if EB_CLI_PLATFORM placeholder exists and replace it
+        if 'global' in eb_config and 'default_platform' in eb_config['global']:
+            platform_value = eb_config['global']['default_platform']
+            if isinstance(platform_value, str) and '${EB_CLI_PLATFORM}' in platform_value:
+                eb_config['global']['default_platform'] = get_eb_cli_platform_name(config['aws']['platform'])
+    
+    # Write the config file
+    (eb_dir / 'config.yml').write_text(yaml.safe_dump(eb_config, sort_keys=True))
+    print(f"Created EB CLI configuration in {eb_dir / 'config.yml'}")
+
 def deploy_application(config: Dict[str, Any]) -> None:
     """Deploy the application to Elastic Beanstalk."""
     project_name = get_project_name()
     region = config['aws']['region']
     platform = config['aws']['platform']
+    project_root = Path(__file__).parent.parent.parent
     
     print(f"Deploying to region: {region}")
     print(f"Using platform: {platform}")
@@ -199,54 +281,8 @@ def deploy_application(config: Dict[str, Any]) -> None:
     s3_client = session.client('s3')
     elbv2_client = session.client('elbv2')
     
-    # Create EB CLI config
-    eb_dir = Path(__file__).parent.parent.parent / '.elasticbeanstalk'
-    eb_dir.mkdir(exist_ok=True)
-    
-    # Get the platform name for the config file
-    # Extract the generic platform name from the full solution stack
-    platform_parts = platform.split(" ")
-    default_platform = "Docker"
-    
-    # Try to construct a more specific platform name based on the solution stack
-    if "Docker" in platform:
-        # Look for common patterns in platform names
-        if "Amazon Linux" in platform:
-            # Find the OS details (e.g., "64bit Amazon Linux 2023")
-            os_parts = []
-            for i, part in enumerate(platform_parts):
-                if part == "Amazon" and i+2 < len(platform_parts):
-                    os_parts = platform_parts[i-1:i+3]  # Get bits, Amazon, Linux, version
-                    break
-            
-            if os_parts:
-                default_platform = f"Docker running on {' '.join(os_parts)}"
-            else:
-                default_platform = "Docker"
-    
-    (eb_dir / 'config.yml').write_text(yaml.safe_dump({
-        'branch-defaults': {
-            'main': {
-                'environment': config['application']['environment'],
-                'group_suffix': None
-            }
-        },
-        'global': {
-            'application_name': config['application']['name'],
-            'branch': None,
-            'default_ec2_keyname': None,
-            'default_platform': default_platform,
-            'default_region': region,
-            'include_git_submodules': True,
-            'instance_profile': None,
-            'platform_name': None,
-            'platform_version': None,
-            'profile': None,
-            'repository': None,
-            'sc': 'git',
-            'workspace_type': 'Application'
-        }
-    }, sort_keys=True))
+    # Create EB CLI config file
+    create_eb_cli_config(config, project_root)
     
     # Set up IAM resources
     common.manage_iam_role(

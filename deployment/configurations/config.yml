@@ -44,3 +44,24 @@ iam:
       - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
     custom_policies:
       - bedrock.json
+
+# EB CLI Configuration
+elasticbeanstalk_cli:
+  branch-defaults:
+    main:
+      environment: ${PROJECT_NAME}-env
+      group_suffix: null
+  global:
+    application_name: ${PROJECT_NAME}
+    branch: null
+    default_ec2_keyname: null
+    default_platform: ${EB_CLI_PLATFORM}
+    default_region: ${AWS_REGION}
+    include_git_submodules: true
+    instance_profile: null
+    platform_name: null
+    platform_version: null
+    profile: null
+    repository: null
+    sc: git
+    workspace_type: Application
