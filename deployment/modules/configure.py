@@ -11,208 +11,442 @@ import yaml
 import boto3
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('deployment.configure')
+# Set up standardized logging
+LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, 
+                   datefmt='%Y-%m-%d %H:%M:%S')
+logger = logging.getLogger('deployment')
 
 class ConfigurationError(Exception):
     """Exception raised for configuration errors."""
     pass
 
-def get_project_root() -> Path:
-    """Return the project root directory."""
-    # Navigate up from the current file to find the project root
-    # configure.py is in deployment/modules/, so we need to go up two levels
-    return Path(__file__).parent.parent.parent
+class ProgressIndicator:
+    """Simple progress logging without animations."""
+    
+    @staticmethod
+    def start(message):
+        """Log the start of an operation."""
+        logger.info(f"{message}")
+    
+    @staticmethod
+    def step(char=None):
+        """No-op for compatibility."""
+        pass
+    
+    @staticmethod
+    def complete(message=None):
+        """Log the completion of an operation."""
+        if message:
+            logger.info(f"{message}")
+        else:
+            logger.info("Complete")
 
-def get_project_name() -> str:
-    """Return the name of the root-level folder (project)."""
-    return get_project_root().name
 
-def get_deployment_dir() -> Path:
-    """Return the deployment directory."""
-    return get_project_root() / 'deployment'
-
-def get_config_path() -> Path:
-    """Return the path to the config.yml file."""
-    return get_deployment_dir() / 'configurations' / 'config.yml'
-
-def get_policies_dir() -> Path:
-    """Return the path to the policies directory."""
-    return get_deployment_dir() / 'policies'
-
-def get_policy_path(filename: str) -> Path:
-    """Return the path to a specific policy file."""
-    policy_path = get_policies_dir() / filename
-    if not policy_path.exists():
-        raise ConfigurationError(f"Policy file not found: {policy_path}")
-    return policy_path
-
-def load_policy(filename: str) -> Dict:
-    """Load a JSON policy file."""
-    import json
-    try:
-        policy_path = get_policy_path(filename)
-        policy_content = policy_path.read_text()
-        logger.debug(f"Loaded policy content from {filename}: {policy_content[:100]}...")
-        return json.loads(policy_content)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in policy file {filename}: {e}")
-        raise ConfigurationError(f"Failed to parse JSON in {filename}: {e}")
-    except Exception as e:
-        logger.error(f"Failed to load {filename}: {e}")
-        raise ConfigurationError(f"Failed to load {filename}: {e}")
-
-def get_aws_region() -> str:
+class ClientManager:
     """
-    Get the AWS region from the configured profile.
-    If region cannot be determined, returns the first available region.
+    AWS client manager that handles caching and consistent region usage.
     """
-    try:
-        session = boto3.Session()
-        region = session.region_name
+    _clients = {}
+    _session = None
+    _region = None
+    
+    @classmethod
+    def initialize(cls, region=None):
+        """Initialize the client manager with a region."""
+        if region:
+            cls._region = region
+        else:
+            # Try to get from environment or default
+            cls._region = os.environ.get('AWS_REGION')
         
-        if not region:
+        # Create session with region if we have one
+        if cls._region:
+            cls._session = boto3.Session(region_name=cls._region)
+        else:
+            cls._session = boto3.Session()
+            cls._region = cls._session.region_name
+        
+        # Reset clients cache
+        cls._clients = {}
+        
+        return cls._region
+    
+    @classmethod
+    def get_region(cls):
+        """Get the current AWS region."""
+        if not cls._region:
+            cls.initialize()
+        return cls._region
+    
+    @classmethod
+    def get_client(cls, service_name):
+        """Get an AWS client (cached)."""
+        if service_name not in cls._clients:
+            if not cls._session:
+                cls.initialize()
+            cls._clients[service_name] = cls._session.client(service_name)
+        return cls._clients[service_name]
+    
+    @classmethod
+    def get_all_clients(cls, services=None):
+        """Get multiple AWS clients as a dictionary."""
+        if not services:
+            services = ['elasticbeanstalk', 'iam', 's3', 'elbv2', 'acm', 'route53', 'ec2', 'sts']
+        
+        return {
+            service: cls.get_client(service)
+            for service in services
+        }
+
+
+class ConfigurationManager:
+    """
+    Manages and caches application configuration.
+    Prioritizes .elasticbeanstalk/config.yml when available.
+    """
+    _config = None
+    _eb_config = None
+    _project_root = None
+    _project_name = None
+    
+    @classmethod
+    def get_project_root(cls) -> Path:
+        """Return the project root directory."""
+        if not cls._project_root:
+            # Navigate up from the current file to find the project root
+            # configure.py is in deployment/modules/, so we need to go up two levels
+            cls._project_root = Path(__file__).parent.parent.parent
+        return cls._project_root
+    
+    @classmethod
+    def get_project_name(cls) -> str:
+        """Return the name of the root-level folder (project)."""
+        if not cls._project_name:
+            cls._project_name = cls.get_project_root().name
+        return cls._project_name
+    
+    @classmethod
+    def get_deployment_dir(cls) -> Path:
+        """Return the deployment directory."""
+        return cls.get_project_root() / 'deployment'
+    
+    @classmethod
+    def get_config_path(cls) -> Path:
+        """Return the path to the config.yml file."""
+        return cls.get_deployment_dir() / 'config.yml'  # Changed from configurations/config.yml
+    
+    @classmethod
+    def get_policies_dir(cls) -> Path:
+        """Return the path to the policies directory."""
+        return cls.get_deployment_dir() / 'policies'
+    
+    @classmethod
+    def get_policy_path(cls, filename: str) -> Path:
+        """Return the path to a specific policy file."""
+        policy_path = cls.get_policies_dir() / filename
+        if not policy_path.exists():
+            raise ConfigurationError(f"Policy file not found: {policy_path}")
+        return policy_path
+    
+    @classmethod
+    def get_eb_config_path(cls) -> Optional[Path]:
+        """Return the path to .elasticbeanstalk/config.yml if it exists."""
+        path = cls.get_project_root() / '.elasticbeanstalk' / 'config.yml'
+        return path if path.exists() else None
+    
+    @classmethod
+    def load_eb_config(cls) -> Optional[Dict]:
+        """Load the .elasticbeanstalk/config.yml configuration if it exists."""
+        if cls._eb_config is not None:
+            return cls._eb_config
+            
+        eb_config_path = cls.get_eb_config_path()
+        if eb_config_path:
+            try:
+                cls._eb_config = yaml.safe_load(eb_config_path.read_text())
+                logger.debug("Loaded EB CLI configuration from .elasticbeanstalk/config.yml")
+                return cls._eb_config
+            except Exception as e:
+                logger.warning(f"Failed to load EB CLI configuration: {e}")
+        
+        return None
+    
+    @classmethod
+    def get_aws_region_from_eb_config(cls) -> Optional[str]:
+        """Get AWS region from EB CLI configuration."""
+        eb_config = cls.load_eb_config()
+        if eb_config and 'global' in eb_config and 'default_region' in eb_config['global']:
+            region = eb_config['global']['default_region']
+            if region:
+                logger.debug(f"Using region from EB CLI config: {region}")
+                return region
+        return None
+    
+    @classmethod
+    def get_platform_from_eb_config(cls) -> Optional[str]:
+        """Get platform from EB CLI configuration."""
+        eb_config = cls.load_eb_config()
+        if eb_config and 'global' in eb_config and 'default_platform' in eb_config['global']:
+            platform = eb_config['global']['default_platform']
+            if platform:
+                logger.debug(f"Using platform from EB CLI config: {platform}")
+                return platform
+        return None
+    
+    @classmethod
+    def load_policy(cls, filename: str) -> Dict:
+        """Load a JSON policy file."""
+        import json
+        try:
+            policy_path = cls.get_policy_path(filename)
+            policy_content = policy_path.read_text()
+            logger.debug(f"Loaded policy content from {filename}")
+            return json.loads(policy_content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in policy file {filename}: {e}")
+            raise ConfigurationError(f"Failed to parse JSON in {filename}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load {filename}: {e}")
+            raise ConfigurationError(f"Failed to load {filename}: {e}")
+            
+    @classmethod
+    def get_aws_region(cls) -> str:
+        """
+        Get the AWS region from multiple sources in priority order:
+        1. EB CLI config
+        2. AWS_REGION environment variable
+        3. Boto3 session region
+        4. First available region
+        """
+        # Try to get from EB CLI config
+        region = cls.get_aws_region_from_eb_config()
+        if region:
+            return region
+            
+        # Try to get from environment variable
+        region = os.environ.get('AWS_REGION')
+        if region:
+            logger.debug(f"Using region from AWS_REGION environment variable: {region}")
+            return region
+        
+        # Try to get from boto3 session
+        try:
+            session = boto3.Session()
+            region = session.region_name
+            if region:
+                logger.debug(f"Using region from boto3 session: {region}")
+                return region
+                
             # Try to get from configured profile
             profile = session.profile_name
             if profile:
+                logger.debug(f"Looking up region from AWS profile: {profile}")
                 config = session.client('config')
                 region = config.get_discovered_resource_counts(
                     resourceType='AWS::Config::ResourceCompliance',
                     limit=1
                 ).get('region')
+                if region:
+                    logger.debug(f"Using region from profile {profile}: {region}")
+                    return region
             
             # If still no region, get first available region
-            if not region:
-                available_regions = session.get_available_regions('elasticbeanstalk')
-                if available_regions:
-                    region = available_regions[0]
-                    logger.info(f"No AWS region specified. Using first available region: {region}")
+            available_regions = session.get_available_regions('elasticbeanstalk')
+            if available_regions:
+                region = available_regions[0]
+                logger.info(f"No AWS region specified. Using first available region: {region}")
+                return region
+            else:
+                raise ConfigurationError("No available regions found")
+        
+        except Exception as e:
+            logger.error(f"Could not determine AWS region: {str(e)}")
+            raise ConfigurationError(f"Unable to determine AWS region: {e}")
+    
+    @classmethod
+    def get_latest_docker_platform(cls) -> str:
+        """
+        Get the latest Docker platform from Elastic Beanstalk if not in EB config.
+        Returns the exact solution stack name needed for environment creation.
+        """
+        # Try to get platform from EB CLI config first
+        platform = cls.get_platform_from_eb_config()
+        if platform:
+            # Convert EB CLI platform name to solution stack if needed
+            platform_name = platform.lower()
+            if 'docker' in platform_name and not platform_name.startswith('64bit'):
+                logger.debug(f"Converting EB CLI platform name to solution stack: {platform}")
+                # Use ClientManager to get the client
+                eb_client = ClientManager.get_client('elasticbeanstalk')
+                
+                # Get all available solution stacks
+                solution_stacks = eb_client.list_available_solution_stacks()['SolutionStacks']
+                
+                # Filter for Docker stacks that match our platform
+                docker_stacks = [
+                    s for s in solution_stacks 
+                    if 'Docker' in s and platform_name in s.lower()
+                ]
+                
+                if docker_stacks:
+                    # Sort to get the latest version
+                    platform = sorted(docker_stacks, reverse=True)[0]
+                    logger.info(f"Found matching Docker solution stack: {platform}")
                 else:
-                    raise ConfigurationError("No available regions found")
+                    logger.warning(f"No matching Docker solution stack found for {platform}")
+                    # Fall back to regular platform discovery
+                    return cls._discover_latest_platform()
+            
+            return platform
         
-        return region
-    except Exception as e:
-        logger.error(f"Could not determine AWS region: {str(e)}")
-        raise ConfigurationError(f"Unable to determine AWS region: {e}")
-
-def get_latest_docker_platform() -> str:
-    """
-    Get the latest Docker platform from Elastic Beanstalk.
-    Returns the exact solution stack name needed for environment creation.
-    """
-    try:
-        region = get_aws_region()
-        session = boto3.Session(region_name=region)
-        eb_client = session.client('elasticbeanstalk')
-        
-        # Get all available solution stacks directly
-        logger.info("Retrieving available solution stacks...")
-        solution_stacks = eb_client.list_available_solution_stacks()['SolutionStacks']
-        logger.info(f"Found {len(solution_stacks)} solution stacks")
-        
-        # Filter for Docker stacks
-        docker_stacks = [s for s in solution_stacks if 'Docker' in s]
-        logger.info(f"Found {len(docker_stacks)} Docker solution stacks")
-        
-        if not docker_stacks:
-            raise ConfigurationError("No Docker solution stacks found in this region")
-        
-        # First try to find Amazon Linux 2023 Docker stacks
-        al2023_stacks = [s for s in docker_stacks if 'Amazon Linux 2023' in s]
-        
-        if al2023_stacks:
-            # Sort to get the latest version (sort alphabetically since version is in the name)
-            latest_stack = sorted(al2023_stacks, reverse=True)[0]
-            logger.info(f"Using latest Amazon Linux 2023 Docker stack: {latest_stack}")
+        # No platform in EB config, discover latest
+        return cls._discover_latest_platform()
+    
+    @classmethod
+    def _discover_latest_platform(cls) -> str:
+        """
+        Discover the latest Docker platform from AWS.
+        Used when no platform is specified in EB CLI config.
+        """
+        try:
+            # Use ClientManager to get the client
+            region = ClientManager.get_region()
+            eb_client = ClientManager.get_client('elasticbeanstalk')
+            
+            ProgressIndicator.start("Retrieving available solution stacks")
+            solution_stacks = eb_client.list_available_solution_stacks()['SolutionStacks']
+            logger.debug(f"Found {len(solution_stacks)} solution stacks")
+            
+            # Filter for Docker stacks
+            docker_stacks = [s for s in solution_stacks if 'Docker' in s]
+            logger.debug(f"Found {len(docker_stacks)} Docker solution stacks")
+            
+            if not docker_stacks:
+                ProgressIndicator.complete("failed")
+                raise ConfigurationError("No Docker solution stacks found in this region")
+            
+            # First try to find Amazon Linux 2023 Docker stacks
+            al2023_stacks = [s for s in docker_stacks if 'Amazon Linux 2023' in s]
+            
+            if al2023_stacks:
+                # Sort to get the latest version
+                latest_stack = sorted(al2023_stacks, reverse=True)[0]
+                ProgressIndicator.complete("done")
+                logger.info(f"Using latest Amazon Linux 2023 Docker stack: {latest_stack}")
+                return latest_stack
+            
+            # If no AL2023 stacks, try Amazon Linux 2
+            al2_stacks = [s for s in docker_stacks if 'Amazon Linux 2' in s and 'Amazon Linux 2023' not in s]
+            
+            if al2_stacks:
+                latest_stack = sorted(al2_stacks, reverse=True)[0]
+                ProgressIndicator.complete("done")
+                logger.info(f"Using latest Amazon Linux 2 Docker stack: {latest_stack}")
+                return latest_stack
+            
+            # If all else fails, use the latest Docker stack available
+            latest_stack = sorted(docker_stacks, reverse=True)[0]
+            ProgressIndicator.complete("done")
+            logger.info(f"Using Docker stack: {latest_stack}")
             return latest_stack
+            
+        except Exception as e:
+            ProgressIndicator.complete("failed")
+            logger.error(f"Could not determine Docker platform: {str(e)}")
+            raise ConfigurationError(f"Unable to determine Docker platform: {str(e)}")
+            
+    @classmethod
+    def replace_placeholders(cls, obj: Any, replacements: Dict[str, str]) -> Any:
+        """
+        Recursively replace placeholder variables in strings.
         
-        # If no AL2023 stacks, try Amazon Linux 2
-        al2_stacks = [s for s in docker_stacks if 'Amazon Linux 2' in s and 'Amazon Linux 2023' not in s]
+        Args:
+            obj: Object to process (string, dict, list)
+            replacements: Dictionary of {placeholder: value} pairs
         
-        if al2_stacks:
-            latest_stack = sorted(al2_stacks, reverse=True)[0]
-            logger.info(f"Using latest Amazon Linux 2 Docker stack: {latest_stack}")
-            return latest_stack
+        Returns:
+            Object with placeholders replaced
+        """
+        if isinstance(obj, str) and '${' in obj and '}' in obj:
+            result = obj
+            for placeholder, value in replacements.items():
+                if f"${{{placeholder}}}" in result:
+                    result = result.replace(f"${{{placeholder}}}", value)
+            
+            # Handle environment variables for any remaining ${VAR_NAME} patterns
+            env_vars = re.findall(r'\${([A-Za-z0-9_]+)}', result)
+            for var in env_vars:
+                if var in os.environ:
+                    result = result.replace(f"${{{var}}}", os.environ[var])
+            return result
+        elif isinstance(obj, dict):
+            return {k: cls.replace_placeholders(v, replacements) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [cls.replace_placeholders(i, replacements) for i in obj]
+        return obj
+            
+    @classmethod
+    def load_config(cls, reset_cache=False) -> Dict:
+        """
+        Load configuration from YAML and replace placeholders.
+        Uses cached version if already loaded.
         
-        # If all else fails, use the latest Docker stack available
-        latest_stack = sorted(docker_stacks, reverse=True)[0]
-        logger.info(f"Using Docker stack: {latest_stack}")
-        return latest_stack
-        
-    except Exception as e:
-        logger.error(f"Could not determine Docker platform: {str(e)}")
-        raise ConfigurationError(f"Unable to determine Docker platform: {str(e)}")
+        Args:
+            reset_cache: Force reload config even if cached
+            
+        Returns:
+            Dict: The loaded and processed configuration
+        """
+        if cls._config is not None and not reset_cache:
+            return cls._config
+            
+        try:
+            config_path = cls.get_config_path()
+            config = yaml.safe_load(config_path.read_text())
+            
+            # Get values for placeholders
+            project_name = cls.get_project_name()
+            aws_region = cls.get_aws_region()
+            
+            # Initialize the client manager with our region
+            ClientManager.initialize(aws_region)
+            
+            # Get platform - use eb config if available
+            docker_platform = cls.get_latest_docker_platform()
+            
+            # Define replacements
+            replacements = {
+                'PROJECT_NAME': project_name,
+                'AWS_REGION': aws_region,
+                'LATEST_DOCKER_PLATFORM': docker_platform
+            }
+            
+            # Add EB_CLI_PLATFORM for backwards compatibility
+            eb_cli_platform = get_eb_cli_platform_name(docker_platform)
+            replacements['EB_CLI_PLATFORM'] = eb_cli_platform
+            
+            # Replace placeholders
+            config = cls.replace_placeholders(config, replacements)
+            
+            # Log the resolved values
+            logger.info(f"Project Name: {project_name}")
+            logger.info(f"AWS Region: {aws_region}")
+            logger.info(f"Platform: {docker_platform}")
+            
+            # Validate required fields
+            validate_config(config)
+            
+            # Cache the config
+            cls._config = config
+            
+            return config
+        except Exception as e:
+            logger.error(f"Configuration error: {str(e)}")
+            raise ConfigurationError(f"Failed to load configuration: {e}")
 
-def replace_placeholders(obj: Any, replacements: Dict[str, str]) -> Any:
-    """
-    Recursively replace placeholder variables in strings.
-    
-    Args:
-        obj: Object to process (string, dict, list)
-        replacements: Dictionary of {placeholder: value} pairs
-    
-    Returns:
-        Object with placeholders replaced
-    """
-    if isinstance(obj, str) and '${' in obj and '}' in obj:
-        result = obj
-        for placeholder, value in replacements.items():
-            if f"${{{placeholder}}}" in result:
-                result = result.replace(f"${{{placeholder}}}", value)
-        
-        # Handle environment variables for any remaining ${VAR_NAME} patterns
-        env_vars = re.findall(r'\${([A-Za-z0-9_]+)}', result)
-        for var in env_vars:
-            if var in os.environ:
-                result = result.replace(f"${{{var}}}", os.environ[var])
-        return result
-    elif isinstance(obj, dict):
-        return {k: replace_placeholders(v, replacements) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [replace_placeholders(i, replacements) for i in obj]
-    return obj
-
-def load_config() -> Dict:
-    """
-    Load configuration from YAML and replace placeholders.
-    
-    Returns:
-        Dict: The loaded and processed configuration
-    """
-    try:
-        config_path = get_config_path()
-        config = yaml.safe_load(config_path.read_text())
-        
-        # Get values for placeholders
-        project_name = get_project_name()
-        aws_region = get_aws_region()
-        docker_platform = get_latest_docker_platform()
-        
-        # Define replacements
-        replacements = {
-            'PROJECT_NAME': project_name,
-            'AWS_REGION': aws_region,
-            'LATEST_DOCKER_PLATFORM': docker_platform
-        }
-        
-        # Replace placeholders
-        config = replace_placeholders(config, replacements)
-        
-        # Log the resolved values
-        logger.info(f"Using AWS Region: {aws_region}")
-        logger.info(f"Using Platform: {docker_platform}")
-        logger.info(f"Project Name: {project_name}")
-        
-        # Validate required fields
-        validate_config(config)
-        
-        return config
-    except Exception as e:
-        logger.error(f"Configuration error: {str(e)}")
-        raise ConfigurationError(f"Failed to load configuration: {e}")
 
 def validate_config(config: Dict) -> None:
     """
@@ -239,6 +473,7 @@ def validate_config(config: Dict) -> None:
             if field not in config[section]:
                 raise ConfigurationError(f"Missing required field '{field}' in '{section}' section")
 
+
 def get_eb_cli_platform_name(platform: str) -> str:
     """
     Convert AWS solution stack name to EB CLI platform name format.
@@ -249,6 +484,9 @@ def get_eb_cli_platform_name(platform: str) -> str:
     Returns:
         str: EB CLI compatible platform name
     """
+    if not platform or not isinstance(platform, str):
+        return "Docker running on 64bit Amazon Linux 2023"
+        
     platform_parts = platform.split(" ")
     default_platform = "Docker"
     
@@ -268,9 +506,11 @@ def get_eb_cli_platform_name(platform: str) -> str:
     
     return default_platform
 
+
 def get_aws_clients(config: Dict) -> Dict:
     """
     Initialize and return AWS clients using the configuration.
+    Legacy function that uses ClientManager internally for compatibility.
     
     Args:
         config: The loaded configuration
@@ -278,23 +518,17 @@ def get_aws_clients(config: Dict) -> Dict:
     Returns:
         Dict: Dictionary of AWS clients
     """
+    # Initialize client manager with the region from config
     region = config['aws']['region']
-    session = boto3.Session(region_name=region)
+    ClientManager.initialize(region)
     
-    return {
-        'eb': session.client('elasticbeanstalk'),
-        'iam': session.client('iam'),
-        's3': session.client('s3'),
-        'elbv2': session.client('elbv2'),
-        'acm': session.client('acm'),
-        'r53': session.client('route53'),
-        'ec2': session.client('ec2'),
-        'sts': session.client('sts')
-    }
+    # Return all clients
+    return ClientManager.get_all_clients()
+
 
 def ensure_env_in_gitignore() -> None:
     """Ensure .env is listed in .gitignore file."""
-    gitignore_path = get_project_root() / '.gitignore'
+    gitignore_path = ConfigurationManager.get_project_root() / '.gitignore'
     
     # Check if .gitignore exists
     if not gitignore_path.exists():
@@ -314,3 +548,46 @@ def ensure_env_in_gitignore() -> None:
             if not content.endswith('\n'):
                 f.write('\n')
             f.write(".env\n")
+
+
+# Legacy functions that use ConfigurationManager internally for compatibility
+
+def get_project_root() -> Path:
+    """Return the project root directory."""
+    return ConfigurationManager.get_project_root()
+
+def get_project_name() -> str:
+    """Return the name of the root-level folder (project)."""
+    return ConfigurationManager.get_project_name()
+
+def get_deployment_dir() -> Path:
+    """Return the deployment directory."""
+    return ConfigurationManager.get_deployment_dir()
+
+def get_config_path() -> Path:
+    """Return the path to the config.yml file."""
+    return ConfigurationManager.get_deployment_dir() / 'config.yml'  # Changed from configurations/config.yml
+
+def get_policies_dir() -> Path:
+    """Return the path to the policies directory."""
+    return ConfigurationManager.get_policies_dir()
+
+def get_policy_path(filename: str) -> Path:
+    """Return the path to a specific policy file."""
+    return ConfigurationManager.get_policy_path(filename)
+
+def load_policy(filename: str) -> Dict:
+    """Load a JSON policy file."""
+    return ConfigurationManager.load_policy(filename)
+
+def get_aws_region() -> str:
+    """Get the AWS region from multiple sources."""
+    return ConfigurationManager.get_aws_region()
+
+def get_latest_docker_platform() -> str:
+    """Get the latest Docker platform from Elastic Beanstalk."""
+    return ConfigurationManager.get_latest_docker_platform()
+
+def load_config(reset_cache=False) -> Dict:
+    """Load configuration from YAML and replace placeholders."""
+    return ConfigurationManager.load_config(reset_cache)

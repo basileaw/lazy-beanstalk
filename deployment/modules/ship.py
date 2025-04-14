@@ -1,4 +1,4 @@
-# modules/ship.py
+# ship.py
 
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
@@ -11,20 +11,21 @@ import time
 import fnmatch
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Set, Optional, Tuple
+from typing import Dict, Any, Optional
 import yaml
 from botocore.exceptions import ClientError
 
 from . import common
 from .common import DeploymentError
 from .configure import (
-    get_project_name, get_project_root, get_aws_clients, 
-    get_eb_cli_platform_name, ConfigurationError
+    ConfigurationManager, ClientManager, ProgressIndicator, logger,
+    get_eb_cli_platform_name
 )
 
 def create_app_bundle() -> str:
     """Create a ZIP archive of application files based on .ebignore."""
-    project_root = get_project_root()
+    ProgressIndicator.start("Creating application bundle")
+    project_root = ConfigurationManager.get_project_root()
     ebignore_path = project_root / '.ebignore'
     
     # Parse .ebignore file
@@ -88,18 +89,22 @@ def create_app_bundle() -> str:
                 if not excluded and not rel_path == '.ebignore':
                     zipf.write(file_path, rel_path)
                     file_count += 1
+                    # Show progress occasionally
+                    if file_count % 50 == 0:
+                        ProgressIndicator.step()
     
-    print(f"Created application bundle with {file_count} files")
+    ProgressIndicator.complete(f"added {file_count} files")
     return str(bundle_path)
 
 @common.aws_handler
-def ensure_instance_profile(iam_client, config: Dict[str, Any]) -> None:
+def ensure_instance_profile(config: Dict[str, Any]) -> None:
     """Set up instance profile and its associated role."""
+    iam_client = ClientManager.get_client('iam')
     profile_name = config['iam']['instance_profile_name']
     role_name = config['iam']['instance_role_name']
     
     # Set up the role first
-    common.manage_iam_role(iam_client, role_name, config['iam']['instance_role_policies'])
+    common.manage_iam_role(role_name, config['iam']['instance_role_policies'])
     
     try:
         iam_client.get_instance_profile(InstanceProfileName=profile_name)
@@ -109,29 +114,36 @@ def ensure_instance_profile(iam_client, config: Dict[str, Any]) -> None:
         if not roles or roles[0]['RoleName'] != role_name:
             # Remove any existing roles
             for existing_role in roles:
+                logger.info(f"Removing role {existing_role['RoleName']} from profile {profile_name}")
                 iam_client.remove_role_from_instance_profile(
                     InstanceProfileName=profile_name,
                     RoleName=existing_role['RoleName']
                 )
             # Add our role
+            logger.info(f"Adding role {role_name} to profile {profile_name}")
             iam_client.add_role_to_instance_profile(
                 InstanceProfileName=profile_name,
                 RoleName=role_name
             )
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchEntity':
+            logger.info(f"Creating instance profile {profile_name}")
             iam_client.create_instance_profile(InstanceProfileName=profile_name)
             iam_client.add_role_to_instance_profile(
                 InstanceProfileName=profile_name,
                 RoleName=role_name
             )
-            time.sleep(10)  # Allow time for profile propagation
+            # Allow time for profile propagation
+            logger.info("Waiting for instance profile propagation")
+            time.sleep(10)
         else:
             raise
 
-def wait_for_version(eb_client, app_name: str, version: str) -> None:
+def wait_for_version(app_name: str, version: str) -> None:
     """Wait for application version to be processed."""
-    print("Waiting for application version to be processed...")
+    eb_client = ClientManager.get_client('elasticbeanstalk')
+    ProgressIndicator.start("Waiting for application version to be processed")
+    
     while True:
         versions = eb_client.describe_application_versions(
             ApplicationName=app_name,
@@ -139,36 +151,39 @@ def wait_for_version(eb_client, app_name: str, version: str) -> None:
         )['ApplicationVersions']
         
         if not versions:
+            ProgressIndicator.complete("failed")
             raise DeploymentError(f"Version {version} not found")
         
         status = versions[0]['Status']
-        print(f"Version status: {status}")
-        
         if status == 'PROCESSED':
+            ProgressIndicator.complete("done")
             break
         elif status == 'FAILED':
+            ProgressIndicator.complete("failed")
             raise DeploymentError(f"Version {version} processing failed")
-        time.sleep(5)
+            
+        ProgressIndicator.step()
+        time.sleep(3)
 
 @common.aws_handler
-def preserve_env_state(eb_client, elbv2_client, env_name: str, project_name: str) -> Optional[Dict[str, Any]]:
+def preserve_env_state(env_name: str, project_name: str) -> Optional[Dict[str, Any]]:
     """
     Preserve environment state before update, including HTTPS configuration.
     
     Args:
-        eb_client: Elastic Beanstalk client
-        elbv2_client: ELBv2 client
         env_name: Environment name
         project_name: Project name for tag prefix
     
     Returns:
         Dictionary containing state to preserve, or None if no state to preserve
     """
-    lb_arn = common.find_environment_load_balancer(eb_client, elbv2_client, env_name)
+    # Get load balancer ARN
+    lb_arn = common.find_environment_load_balancer(env_name)
     if not lb_arn:
         return None
 
-    https_config = common.preserve_https_config(elbv2_client, lb_arn, project_name)
+    # Preserve HTTPS configuration if it exists
+    https_config = common.preserve_https_config(lb_arn, project_name)
     if not https_config:
         return None
 
@@ -177,12 +192,11 @@ def preserve_env_state(eb_client, elbv2_client, env_name: str, project_name: str
         'load_balancer_arn': lb_arn
     }
 
-def restore_env_state(elbv2_client, state: Dict[str, Any], project_name: str) -> None:
+def restore_env_state(state: Dict[str, Any], project_name: str) -> None:
     """
     Restore environment state after update, including HTTPS configuration.
     
     Args:
-        elbv2_client: ELBv2 client
         state: State dictionary from preserve_env_state
         project_name: Project name for tag prefix
     """
@@ -190,29 +204,33 @@ def restore_env_state(elbv2_client, state: Dict[str, Any], project_name: str) ->
         return
 
     if 'https_config' in state and state['https_config']:
-        print("Restoring HTTPS configuration...")
+        logger.info("Restoring HTTPS configuration...")
         common.restore_https_config(
-            elbv2_client,
             state['load_balancer_arn'],
             state['https_config'],
             project_name
         )
 
-def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], version: str, project_name: str) -> None:
+def create_or_update_env(config: Dict[str, Any], version: str) -> None:
     """Create or update Elastic Beanstalk environment."""
+    eb_client = ClientManager.get_client('elasticbeanstalk')
+    project_name = ConfigurationManager.get_project_name()
     env_name = config['application']['environment']
-    env_exists = bool(eb_client.describe_environments(
+    
+    # Check if environment exists
+    envs = eb_client.describe_environments(
         EnvironmentNames=[env_name],
         IncludeDeleted=False
-    )['Environments'])
+    )['Environments']
+    env_exists = bool(envs)
     
     settings = common.get_env_settings(config)
     state = None
     
     if env_exists:
-        print("Updating existing environment...")
+        logger.info(f"Updating existing environment: {env_name}")
         # Preserve state before update
-        state = preserve_env_state(eb_client, elbv2_client, env_name, project_name)
+        state = preserve_env_state(env_name, project_name)
         
         eb_client.update_environment(
             EnvironmentName=env_name,
@@ -220,7 +238,7 @@ def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], versio
             OptionSettings=settings
         )
     else:
-        print("Creating new environment...")
+        logger.info(f"Creating new environment: {env_name}")
         settings.append({
             'Namespace': 'aws:elasticbeanstalk:environment',
             'OptionName': 'LoadBalancerType',
@@ -234,25 +252,27 @@ def create_or_update_env(eb_client, elbv2_client, config: Dict[str, Any], versio
             OptionSettings=settings
         )
     
-    common.wait_for_env_status(eb_client, env_name, 'Ready')
+    # Wait for environment to be ready
+    common.wait_for_env_status(env_name, 'Ready')
     
+    # Restore state if needed
     if state:
-        restore_env_state(elbv2_client, state, project_name)
+        restore_env_state(state, project_name)
 
-def create_eb_cli_config(config: Dict[str, Any], project_root: Path) -> None:
+def create_eb_cli_config(config: Dict[str, Any]) -> None:
     """
     Create EB CLI configuration file from the main config.yml.
     
     Args:
         config: The loaded and processed config dictionary
-        project_root: The root path of the project
     """
+    project_root = ConfigurationManager.get_project_root()
     eb_dir = project_root / '.elasticbeanstalk'
     eb_dir.mkdir(exist_ok=True)
     
     # Check if elasticbeanstalk_cli section exists
     if 'elasticbeanstalk_cli' not in config:
-        print("Warning: No elasticbeanstalk_cli section found in config.yml")
+        logger.info("No elasticbeanstalk_cli section found in config.yml, generating default")
         # Use the old method to generate the config
         eb_config = {
             'branch-defaults': {
@@ -288,66 +308,82 @@ def create_eb_cli_config(config: Dict[str, Any], project_root: Path) -> None:
                 eb_config['global']['default_platform'] = get_eb_cli_platform_name(config['aws']['platform'])
     
     # Write the config file
-    (eb_dir / 'config.yml').write_text(yaml.safe_dump(eb_config, sort_keys=True))
-    print(f"Created EB CLI configuration in {eb_dir / 'config.yml'}")
+    config_path = eb_dir / 'config.yml'
+    with open(config_path, 'w') as f:
+        yaml.safe_dump(eb_config, f, sort_keys=True)
+    logger.info(f"Created EB CLI configuration in {config_path}")
 
 def deploy_application(config: Dict[str, Any]) -> None:
     """Deploy the application to Elastic Beanstalk."""
-    project_name = get_project_name()
+    project_name = ConfigurationManager.get_project_name()
     region = config['aws']['region']
     platform = config['aws']['platform']
-    project_root = get_project_root()
     
-    print(f"Deploying to region: {region}")
-    print(f"Using platform: {platform}")
-    
-    # Get AWS clients
-    aws_clients = get_aws_clients(config)
-    eb_client = aws_clients['eb']
-    iam_client = aws_clients['iam']
-    s3_client = aws_clients['s3']
-    elbv2_client = aws_clients['elbv2']
+    logger.info("Starting deployment")
+    logger.info(f"Deploying to region: {region}")
+    logger.info(f"Using platform: {platform}")
     
     # Create EB CLI config file
-    create_eb_cli_config(config, project_root)
+    create_eb_cli_config(config)
     
     # Set up IAM resources
+    eb_client = ClientManager.get_client('elasticbeanstalk')
+    iam_client = ClientManager.get_client('iam')
+    s3_client = ClientManager.get_client('s3')
+    sts_client = ClientManager.get_client('sts')
+    
+    # Set up service role
     common.manage_iam_role(
-        iam_client,
         config['iam']['service_role_name'],
         config['iam']['service_role_policies']
     )
-    ensure_instance_profile(iam_client, config)
+    
+    # Set up instance profile
+    ensure_instance_profile(config)
     
     # Create/update application
     app_name = config['application']['name']
     if not eb_client.describe_applications(ApplicationNames=[app_name])['Applications']:
+        logger.info(f"Creating application: {app_name}")
         eb_client.create_application(
             ApplicationName=app_name,
             Description=config.get('application', {}).get('description', 'Application created by deployment script')
         )
+    else:
+        logger.info(f"Using existing application: {app_name}")
     
     # Create and upload application version
     version = f"v{datetime.now():%Y%m%d_%H%M%S}"
     bucket = f"elasticbeanstalk-{region}-{app_name.lower()}"
     
+    # Check if bucket exists
     try:
         s3_client.head_bucket(Bucket=bucket)
+        logger.info(f"Using existing S3 bucket: {bucket}")
     except ClientError:
         # For regions other than us-east-1, we need to specify the LocationConstraint
+        logger.info(f"Creating S3 bucket: {bucket}")
         create_bucket_args = {'Bucket': bucket}
         if region != 'us-east-1':
             create_bucket_args['CreateBucketConfiguration'] = {'LocationConstraint': region}
         
         s3_client.create_bucket(**create_bucket_args)
     
+    # Create application bundle
     bundle = create_app_bundle()
     key = f"app-{version}.zip"
     
+    # Upload to S3
+    ProgressIndicator.start(f"Uploading application bundle to S3")
     with open(bundle, 'rb') as f:
         s3_client.upload_fileobj(f, bucket, key)
+    ProgressIndicator.complete("done")
+    
+    # Clean up local bundle
     os.remove(bundle)
     
+    # Create application version
+    logger.info(f"Creating application version: {version}")
     eb_client.create_application_version(
         ApplicationName=app_name,
         VersionLabel=version,
@@ -355,5 +391,10 @@ def deploy_application(config: Dict[str, Any]) -> None:
         Process=True
     )
     
-    wait_for_version(eb_client, app_name, version)
-    create_or_update_env(eb_client, elbv2_client, config, version, project_name)
+    # Wait for version to be processed
+    wait_for_version(app_name, version)
+    
+    # Create or update environment
+    create_or_update_env(config, version)
+    
+    logger.info(f"Deployment completed successfully: {app_name} {version}")

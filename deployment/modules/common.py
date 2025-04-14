@@ -4,18 +4,15 @@
 
 import json
 import time
-import boto3
-import logging
 from functools import wraps
 from datetime import datetime
 from botocore.exceptions import ClientError
 from typing import Dict, Set, Optional, List, Callable, Tuple, Any
 
-from .configure import load_policy
-
-# Set up basic logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('deployment')
+from .configure import (
+    ConfigurationManager, ClientManager, ProgressIndicator,
+    load_policy, logger
+)
 
 class DeploymentError(Exception):
     """Base exception for deployment operations."""
@@ -33,27 +30,40 @@ def aws_handler(func: Callable) -> Callable:
                 error_message = f"AWS {code}: {e.response['Error']['Message']}"
                 logger.error(error_message)
                 raise DeploymentError(error_message)
+            # For resource not found errors, return None if appropriate
+            if code in ['NoSuchEntity', 'NoSuchBucket', 'NoSuchKey']:
+                logger.debug(f"Resource not found: {e.response['Error']['Message']}")
+                return None
     return wrapper
 
-def print_events(eb_client, env_name: str, after: Optional[datetime], seen: Set[str]) -> datetime:
+def print_events(env_name: str, after: Optional[datetime], seen: Set[str]) -> datetime:
     """Print and track new environment events."""
+    eb_client = ClientManager.get_client('elasticbeanstalk')
+    
     kwargs = {'EnvironmentName': env_name, 'MaxRecords': 10}
     if after:
         kwargs['StartTime'] = after
 
-    for event in reversed(eb_client.describe_events(**kwargs).get('Events', [])):
+    events = eb_client.describe_events(**kwargs).get('Events', [])
+    latest_time = after
+    
+    for event in reversed(events):
+        # Create a unique key for each event to avoid duplicates
         key = f"{event['EventDate'].isoformat()}-{event['Message']}"
         if key not in seen:
-            print(f"{event['EventDate']:%Y-%m-%d %H:%M:%S} {event['Severity']}: {event['Message']}")
+            print(f"{event['EventDate']:%Y-%m-%d %H:%M:%S} [{event['Severity']}] {event['Message']}")
             seen.add(key)
-            after = event['EventDate']
+            if not latest_time or event['EventDate'] > latest_time:
+                latest_time = event['EventDate']
     
-    return after
+    return latest_time
 
-def wait_for_env_status(eb_client, env_name: str, target: str) -> None:
+def wait_for_env_status(env_name: str, target: str) -> None:
     """Wait for environment to reach target status."""
-    print(f"Waiting for environment to be {target}...")
+    ProgressIndicator.start(f"Waiting for environment to be {target}")
+    eb_client = ClientManager.get_client('elasticbeanstalk')
     last_time, seen = None, set()
+    status = None
     
     while True:
         try:
@@ -64,26 +74,37 @@ def wait_for_env_status(eb_client, env_name: str, target: str) -> None:
             
             if not envs:
                 if target == 'Terminated':
+                    ProgressIndicator.complete("environment terminated")
                     break
                 raise DeploymentError(f"Environment {env_name} not found")
             
             status = envs[0]['Status']
-            last_time = print_events(eb_client, env_name, last_time, seen)
+            last_time = print_events(env_name, last_time, seen)
             
             if status == target:
+                ProgressIndicator.complete(f"reached {target} state")
                 break
             if status == 'Failed':
+                ProgressIndicator.complete("failed")
                 raise DeploymentError(f"Environment failed to reach {target} status")
+                
+            # Show progress
+            ProgressIndicator.step()
                 
         except ClientError as e:
             if target == 'Terminated' and e.response['Error']['Code'] == 'ResourceNotFoundException':
+                ProgressIndicator.complete("environment terminated")
                 break
+            ProgressIndicator.complete("error")
             raise
             
         time.sleep(5)
+    
+    return status
 
-def check_env_exists(eb_client) -> bool:
+def check_env_exists() -> bool:
     """Check if any environments exist."""
+    eb_client = ClientManager.get_client('elasticbeanstalk')
     return bool(eb_client.describe_environments(IncludeDeleted=False)['Environments'])
 
 def get_env_settings(config: Dict) -> List[Dict[str, str]]:
@@ -117,8 +138,10 @@ def get_env_settings(config: Dict) -> List[Dict[str, str]]:
     ]
 
 @aws_handler
-def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'create') -> None:
+def manage_iam_role(role_name: str, policies: Dict, action: str = 'create') -> None:
     """Create or clean up IAM role and policies."""
+    iam_client = ClientManager.get_client('iam')
+    
     if action == 'create':
         try:
             logger.info(f"Checking if role {role_name} exists")
@@ -149,7 +172,9 @@ def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'c
                     raise
 
         # Handle custom policies
-        account = boto3.client('sts').get_caller_identity()['Account']
+        sts_client = ClientManager.get_client('sts')
+        account = sts_client.get_caller_identity()['Account']
+        
         for policy_file in policies.get('custom_policies', []):
             name = f"{role_name}-{policy_file.replace('.json', '')}"
             policy_arn = f"arn:aws:iam::{account}:policy/{name}"
@@ -161,7 +186,7 @@ def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'c
             # Check if policy exists
             policy_exists = False
             try:
-                response = iam_client.get_policy(PolicyArn=policy_arn)
+                iam_client.get_policy(PolicyArn=policy_arn)
                 policy_exists = True
                 logger.info(f"Policy {name} already exists with ARN: {policy_arn}")
             except ClientError as e:
@@ -223,7 +248,8 @@ def manage_iam_role(iam_client, role_name: str, policies: Dict, action: str = 'c
     elif action == 'cleanup':
         logger.info(f"Cleaning up role {role_name}")
         # Detach and clean up policies
-        account = boto3.client('sts').get_caller_identity()['Account']
+        sts_client = ClientManager.get_client('sts')
+        account = sts_client.get_caller_identity()['Account']
         
         for arn in policies.get('managed_policies', []):
             try:
@@ -266,12 +292,11 @@ def get_resource_prefix(project_name: str) -> str:
     return f"{project_name}:https"
 
 @aws_handler
-def get_https_status(elbv2_client, lb_arn: str, project_name: str) -> Tuple[bool, Optional[str]]:
+def get_https_status(lb_arn: str, project_name: str) -> Tuple[bool, Optional[str]]:
     """
     Check if HTTPS is enabled and return status + certificate ARN.
     
     Args:
-        elbv2_client: AWS elbv2 client
         lb_arn: Load balancer ARN
         project_name: Project name for tag prefix
     
@@ -279,6 +304,7 @@ def get_https_status(elbv2_client, lb_arn: str, project_name: str) -> Tuple[bool
         Tuple of (is_https_enabled, certificate_arn)
     """
     # Check load balancer tags
+    elbv2_client = ClientManager.get_client('elbv2')
     tags = elbv2_client.describe_tags(
         ResourceArns=[lb_arn]
     )['TagDescriptions'][0]['Tags']
@@ -290,18 +316,19 @@ def get_https_status(elbv2_client, lb_arn: str, project_name: str) -> Tuple[bool
     return is_enabled, cert_arn
 
 @aws_handler
-def find_environment_load_balancer(eb_client, elbv2_client, env_name: str) -> Optional[str]:
+def find_environment_load_balancer(env_name: str) -> Optional[str]:
     """
     Find the ALB ARN for an environment.
     
     Args:
-        eb_client: AWS elastic beanstalk client
-        elbv2_client: AWS elbv2 client
         env_name: Environment name
     
     Returns:
         Load balancer ARN if found, None otherwise
     """
+    eb_client = ClientManager.get_client('elasticbeanstalk')
+    elbv2_client = ClientManager.get_client('elbv2')
+    
     env = eb_client.describe_environments(
         EnvironmentNames=[env_name],
         IncludeDeleted=False
@@ -321,22 +348,22 @@ def find_environment_load_balancer(eb_client, elbv2_client, env_name: str) -> Op
     return None
 
 @aws_handler
-def preserve_https_config(elbv2_client, lb_arn: str, project_name: str) -> Optional[Dict[str, Any]]:
+def preserve_https_config(lb_arn: str, project_name: str) -> Optional[Dict[str, Any]]:
     """
     Capture existing HTTPS configuration for preservation.
     
     Args:
-        elbv2_client: AWS elbv2 client
         lb_arn: Load balancer ARN
         project_name: Project name for tag prefix
     
     Returns:
         Dict containing HTTPS configuration if enabled, None otherwise
     """
-    is_enabled, cert_arn = get_https_status(elbv2_client, lb_arn, project_name)
+    is_enabled, cert_arn = get_https_status(lb_arn, project_name)
     if not is_enabled:
         return None
-        
+    
+    elbv2_client = ClientManager.get_client('elbv2')
     listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
     https_listener = next((l for l in listeners if l['Port'] == 443), None)
     
@@ -351,7 +378,6 @@ def preserve_https_config(elbv2_client, lb_arn: str, project_name: str) -> Optio
 
 @aws_handler
 def setup_https_listener(
-    elbv2_client, 
     lb_arn: str, 
     cert_arn: str, 
     project_name: str,
@@ -361,12 +387,13 @@ def setup_https_listener(
     Create or update HTTPS listener with proper configuration.
     
     Args:
-        elbv2_client: AWS elbv2 client
         lb_arn: Load balancer ARN
         cert_arn: Certificate ARN
         project_name: Project name for tag prefix
         ssl_policy: SSL policy name
     """
+    elbv2_client = ClientManager.get_client('elbv2')
+    
     # Get HTTP listener for default actions
     listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
     http_listener = next((l for l in listeners if l['Port'] == 80), None)
@@ -405,12 +432,11 @@ def setup_https_listener(
     )
 
 @aws_handler
-def restore_https_config(elbv2_client, lb_arn: str, config: Dict[str, Any], project_name: str) -> None:
+def restore_https_config(lb_arn: str, config: Dict[str, Any], project_name: str) -> None:
     """
     Restore HTTPS configuration after environment update.
     
     Args:
-        elbv2_client: AWS elbv2 client
         lb_arn: Load balancer ARN
         config: HTTPS configuration dict from preserve_https_config
         project_name: Project name for tag prefix
@@ -419,7 +445,6 @@ def restore_https_config(elbv2_client, lb_arn: str, config: Dict[str, Any], proj
         return
         
     setup_https_listener(
-        elbv2_client,
         lb_arn,
         config['certificate_arn'],
         project_name,

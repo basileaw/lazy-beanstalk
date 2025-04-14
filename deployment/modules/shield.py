@@ -1,4 +1,4 @@
-# modules/shield.py
+# shield.py
 
 import os
 import click
@@ -7,8 +7,8 @@ from typing import Dict, Optional, Tuple
 
 from .common import DeploymentError, aws_handler
 from .configure import (
-    get_project_root, get_project_name, ensure_env_in_gitignore,
-    get_aws_clients
+    ConfigurationManager, ClientManager, ProgressIndicator, logger,
+    ensure_env_in_gitignore
 )
 
 def prompt_for_missing_oidc_vars(config):
@@ -31,8 +31,12 @@ def prompt_for_missing_oidc_vars(config):
     if not missing:
         return True  # All variables are present
         
+    # Show header for prompts
+    if missing:
+        ProgressIndicator.start("OIDC configuration variables required")
+        ProgressIndicator.complete("please provide the following values")
+    
     # Prompt for missing variables
-    click.echo("\nSome required OIDC variables are missing. Please provide them:")
     new_vars = {}
     
     for env_var, prompt_text in missing:
@@ -45,11 +49,11 @@ def prompt_for_missing_oidc_vars(config):
         os.environ[env_var] = value  # Set for current session
     
     # Ask if user wants to save to .env
-    if click.confirm("\nWould you like to save these values to .env file for future use?", default=True):
+    if new_vars and click.confirm("\nWould you like to save these values to .env file for future use?", default=True):
         # Ensure .env is in .gitignore first
         ensure_env_in_gitignore()
         
-        project_root = get_project_root()
+        project_root = ConfigurationManager.get_project_root()
         env_path = project_root / '.env'
         
         # Read existing .env if it exists
@@ -71,7 +75,7 @@ def prompt_for_missing_oidc_vars(config):
             for key, value in existing_vars.items():
                 f.write(f"{key}={value}\n")
         
-        click.echo(f"Values saved to {env_path}")
+        logger.info(f"OIDC configuration values saved to {env_path}")
     
     return True
 
@@ -87,7 +91,7 @@ def validate_oidc_config(config: Dict) -> bool:
         bool: True if configuration is valid, False otherwise
     """
     if 'oidc' not in config:
-        click.echo("ERROR: Missing 'oidc' section in configuration.", err=True)
+        logger.error("Missing 'oidc' section in configuration.")
         return False
     
     # Try to get missing variables through prompts
@@ -101,56 +105,80 @@ def validate_oidc_config(config: Dict) -> bool:
     missing = [var for var in required_vars if var not in os.environ or not os.environ[var]]
     
     if missing:
-        click.echo("ERROR: Still missing required OIDC environment variables:", err=True)
+        logger.error("Still missing required OIDC environment variables:")
         for var in missing:
-            click.echo(f"  - {var}", err=True)
+            logger.error(f"  - {var}")
         return False
     
+    logger.info("OIDC configuration validated successfully")
     return True
 
 @aws_handler
-def get_domain_from_listener(elbv2_client, listener_arn: str) -> str:
+def get_domain_from_listener(listener_arn: str) -> str:
     """Extract domain from the certificate attached to the HTTPS listener."""
+    elbv2_client = ClientManager.get_client('elbv2')
     listener = elbv2_client.describe_listeners(ListenerArns=[listener_arn])['Listeners'][0]
     cert_arn = listener['Certificates'][0]['CertificateArn']
-    acm_client = get_aws_clients({'aws': {'region': os.environ.get('AWS_REGION')}})['acm']
+    
+    acm_client = ClientManager.get_client('acm')
     cert = acm_client.describe_certificate(CertificateArn=cert_arn)['Certificate']
-    project_name = get_project_name()
+    project_name = ConfigurationManager.get_project_name()
     return cert['DomainName'].replace('*', project_name)
 
 @aws_handler
-def find_listener_arn(env_name: str, aws_clients: Dict) -> Tuple[Optional[str], Optional[str]]:
+def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
     """Find HTTPS listener ARN for the environment's ALB."""
-    eb_client = aws_clients['eb']
-    elbv2_client = aws_clients['elbv2']
+    eb_client = ClientManager.get_client('elasticbeanstalk')
+    elbv2_client = ClientManager.get_client('elbv2')
     
+    ProgressIndicator.start("Finding HTTPS listener")
+    
+    # Check if environment exists
     envs = eb_client.describe_environments(EnvironmentNames=[env_name], IncludeDeleted=False)['Environments']
     if not envs:
+        ProgressIndicator.complete("environment not found")
         raise DeploymentError(f"Environment {env_name} not found")
 
-    for lb in elbv2_client.describe_load_balancers()['LoadBalancers']:
+    # Find the load balancer for the environment
+    lbs = elbv2_client.describe_load_balancers()['LoadBalancers']
+    env_lb = None
+    
+    for lb in lbs:
         if lb['Type'].lower() != 'application':
             continue
         
         tags = elbv2_client.describe_tags(ResourceArns=[lb['LoadBalancerArn']])['TagDescriptions'][0]['Tags']
-        if not any(t['Key'] == 'elasticbeanstalk:environment-name' and t['Value'] == env_name for t in tags):
-            continue
-        
-        listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb['LoadBalancerArn'])['Listeners']
-        https_listener = next((l for l in listeners if l['Port'] == 443), None)
-        if https_listener:
-            return https_listener['ListenerArn'], lb['LoadBalancerArn']
+        if any(t['Key'] == 'elasticbeanstalk:environment-name' and t['Value'] == env_name for t in tags):
+            env_lb = lb
+            break
+    
+    if not env_lb:
+        ProgressIndicator.complete("load balancer not found")
+        raise DeploymentError(f"No load balancer found for environment {env_name}")
+    
+    # Find the HTTPS listener
+    listeners = elbv2_client.describe_listeners(LoadBalancerArn=env_lb['LoadBalancerArn'])['Listeners']
+    https_listener = next((l for l in listeners if l['Port'] == 443), None)
+    
+    if not https_listener:
+        ProgressIndicator.complete("HTTPS not configured")
         raise DeploymentError("HTTPS listener not found. Run 'secure' command first.")
     
-    return None, None
+    ProgressIndicator.complete("found")
+    return https_listener['ListenerArn'], env_lb['LoadBalancerArn']
 
 @aws_handler
-def find_target_group_arn(load_balancer_arn: str, aws_clients: Dict) -> str:
+def find_target_group_arn(load_balancer_arn: str) -> str:
     """Get target group ARN for the load balancer."""
-    elbv2_client = aws_clients['elbv2']
+    elbv2_client = ClientManager.get_client('elbv2')
+    ProgressIndicator.start("Finding target group")
+    
     target_groups = elbv2_client.describe_target_groups(LoadBalancerArn=load_balancer_arn)['TargetGroups']
     if not target_groups:
+        ProgressIndicator.complete("not found")
         raise DeploymentError("No target groups found for load balancer")
+    
+    ProgressIndicator.complete("found")
     return target_groups[0]['TargetGroupArn']
 
 def get_client_secret(secret: Optional[str] = None) -> str:
@@ -186,7 +214,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
         'session': config['oidc']['session']  # Non-sensitive, use config values
     }
     
-    click.echo(f"Configuring OIDC authentication for {env_name}...")
+    logger.info(f"Configuring OIDC authentication for {env_name}")
     
     # Get the client secret if not provided
     if not oidc_config['client_secret']:
@@ -195,29 +223,35 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
     if not oidc_config['client_secret']:
         raise DeploymentError("OIDC client secret is required")
     
-    # Get AWS clients
-    aws_clients = get_aws_clients(config)
-    elbv2_client = aws_clients['elbv2']
-        
     # Find the HTTPS listener
-    listener_arn, load_balancer_arn = find_listener_arn(env_name, aws_clients)
+    listener_arn, load_balancer_arn = find_listener_arn(env_name)
     if not listener_arn:
         raise DeploymentError("Could not find HTTPS listener")
     
     # Get domain from the certificate
-    domain = get_domain_from_listener(elbv2_client, listener_arn)
+    domain = get_domain_from_listener(listener_arn)
     
     # Get target group ARN
-    target_group_arn = find_target_group_arn(load_balancer_arn, aws_clients)
+    target_group_arn = find_target_group_arn(load_balancer_arn)
     
     # Clean existing rules
-    click.echo("Removing existing listener rules...")
+    elbv2_client = ClientManager.get_client('elbv2')
+    ProgressIndicator.start("Removing existing listener rules")
+    
+    rules_removed = 0
     for rule in elbv2_client.describe_rules(ListenerArn=listener_arn)['Rules']:
         if not rule.get('IsDefault', False):
             elbv2_client.delete_rule(RuleArn=rule['RuleArn'])
+            rules_removed += 1
+    
+    if rules_removed > 0:
+        ProgressIndicator.complete(f"removed {rules_removed} rules")
+    else:
+        ProgressIndicator.complete("no rules to remove")
     
     # Configure authentication action
-    click.echo("Configuring OIDC authentication...")
+    ProgressIndicator.start("Configuring OIDC authentication")
+    
     auth_action = {
         'Type': 'authenticate-oidc',
         'AuthenticateOidcConfig': {
@@ -235,7 +269,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
     }
 
     # Set default action to 503
-    click.echo("Setting default listener action...")
+    logger.info("Setting default listener action to deny unauthorized access")
     elbv2_client.modify_listener(
         ListenerArn=listener_arn,
         DefaultActions=[{
@@ -249,7 +283,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
     )
 
     # Create authenticated access rule
-    click.echo("Creating authentication rule...")
+    logger.info("Creating authentication rule")
     elbv2_client.create_rule(
         ListenerArn=listener_arn,
         Priority=1,
@@ -259,9 +293,10 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
             {'Type': 'forward', 'TargetGroupArn': target_group_arn, 'Order': 2}
         ]
     )
+    ProgressIndicator.complete("configured")
 
     # Configure HTTP to HTTPS redirect
-    click.echo("Configuring HTTP to HTTPS redirect...")
+    ProgressIndicator.start("Configuring HTTP to HTTPS redirect")
     http_listener = next(
         (l for l in elbv2_client.describe_listeners(LoadBalancerArn=load_balancer_arn)['Listeners']
          if l['Port'] == 80),
@@ -279,6 +314,10 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
                 }
             }]
         )
+        ProgressIndicator.complete("configured")
+    else:
+        ProgressIndicator.complete("HTTP listener not found")
     
-    click.echo(f"\nOIDC authentication successfully configured for {domain}")
-    click.echo("Users will now be required to authenticate via your OIDC provider.")
+    logger.info(f"OIDC authentication successfully configured for {domain}")
+    print(f"\nOIDC authentication successfully configured for {domain}")
+    print("Users will now be required to authenticate via your OIDC provider.")
