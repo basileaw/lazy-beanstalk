@@ -1,4 +1,3 @@
-# Dockerfile
 FROM python:latest
 
 # Set environment variables
@@ -14,8 +13,8 @@ COPY app/ ./
 # Create flag files to track what we've detected
 RUN touch /tmp/no_deps_found
 
-# Poetry detection and installation
-RUN if [ -f "pyproject.toml" ] && grep -q "tool.poetry" pyproject.toml; then \
+# Poetry detection and installation (handles both [tool.poetry] and [project] formats)
+RUN if [ -f "pyproject.toml" ] && (grep -q "tool.poetry" pyproject.toml || grep -q "\[project\]" pyproject.toml); then \
     echo "Detected Poetry project" && \
     pip install --no-cache-dir poetry && \
     poetry config virtualenvs.create false && \
