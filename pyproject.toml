@@ -1,18 +1,13 @@
-[tool.poetry]
+[project]
 name = "lazy-beanstalk"
-authors = ["Alex Basile <basileaw@gmail.com>"]
+authors = [{ name = "Alex Basile", email = "basileaw@gmail.com" }]
 version = "0.0.0"
 description = "A template for deploying Python web apps to AWS Elastic Beanstalk"
-package-mode = false
+requires-python = "^3.12"
+dependencies = ["terminaide>=0.1.1", "chatline>=0.2.0"]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-terminaide = "^0.1.1"
-chatline = "^0.2.0"
-
-[tool.poetry.group.dev.dependencies]
-boto3 = "*"
-botocore = "*"
+[project.optional-dependencies]
+dev = ["boto3", "botocore"]
 
 [build-system]
 requires = ["poetry-core"]
