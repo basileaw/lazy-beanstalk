@@ -2,24 +2,15 @@
 name = "lazy-beanstalk"
 authors = ["Alex Basile <basileaw@gmail.com>"]
 version = "0.0.0"
-description = "A simple web app to deploy to AWS Elastic Beanstalk"
+description = "A template for deploying Python web apps to AWS Elastic Beanstalk"
 package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
-fastapi = "*"
-uvicorn = "*"
-jinja2 = "*"
-bs4 = ">=0.0.2"
-requests = ">=2.32.3"
-httpx = "*"
-rich = "*"
-websockets = "*"
 terminaide = "^0.1.1"
-chatline = "^0.0.6"
+chatline = "^0.2.0"
 
 [tool.poetry.group.dev.dependencies]
-pyyaml = "*"
 boto3 = "*"
 botocore = "*"
 
