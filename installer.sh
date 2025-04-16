@@ -20,8 +20,26 @@ detect_package_manager() {
     echo "pipenv"
   elif [ -f "pdm.lock" ]; then
     echo "pdm"
+  elif [ -f "pyproject.toml" ]; then
+    # Check for tool sections
+    if grep -q "tool.poetry" pyproject.toml; then
+      echo "poetry"
+    elif grep -q "tool.pdm" pyproject.toml; then
+      echo "pdm"
+    elif grep -q "tool.hatch" pyproject.toml; then
+      echo "hatch"
+    elif grep -q "tool.flit" pyproject.toml; then
+      echo "flit"
+    elif grep -q "\[project\]" pyproject.toml && grep -q "build-backend.*poetry" pyproject.toml; then
+      # PEP 621 with Poetry backend
+      echo "poetry"
+    else
+      echo "pip"  # Default for pyproject.toml without known tool
+    fi
+  elif [ -f "environment.yml" ] || [ -f "conda-lock.yml" ]; then
+    echo "conda"
   else
-    echo "pip"  # Default to pip
+    echo "pip"  # Default fallback
   fi
 }
 
@@ -85,7 +103,7 @@ try:
     else:
         sys.exit(1)
 except Exception as e:
-    sys.stderr.write(f'Error parsing pyproject.toml: {str(e)}\n')
+    sys.stderr.write(f'Error parsing pyproject.toml: {str(e)}\\n')
     sys.exit(1)
 "
 }
@@ -131,7 +149,7 @@ try:
     else:
         sys.exit(1)
 except Exception as e:
-    sys.stderr.write(f'Error parsing pyproject.toml: {str(e)}\n')
+    sys.stderr.write(f'Error parsing pyproject.toml: {str(e)}\\n')
     sys.exit(1)
 "
 }
@@ -174,6 +192,60 @@ install_dependencies() {
       else
         pdm add "${dependencies[@]}"
       fi
+      ;;
+    hatch)
+      if [ "$group" == "dev" ]; then
+        # First check if hatch is installed
+        if ! command -v hatch &> /dev/null; then
+          pip install hatch
+        fi
+        # Add dependencies to hatch project
+        for dep in "${dependencies[@]}"; do
+          if [ -n "$dep" ]; then
+            hatch add --dev "$dep"
+          fi
+        done
+      else
+        # First check if hatch is installed
+        if ! command -v hatch &> /dev/null; then
+          pip install hatch
+        fi
+        # Add dependencies to hatch project
+        for dep in "${dependencies[@]}"; do
+          if [ -n "$dep" ]; then
+            hatch add "$dep"
+          fi
+        done
+      fi
+      ;;
+    flit)
+      # First check if flit is installed
+      if ! command -v flit &> /dev/null; then
+        pip install flit
+      fi
+      
+      # Update pyproject.toml and install
+      if [ "$group" == "dev" ]; then
+        pip install "${dependencies[@]}"
+        flit install --deps develop
+      else
+        pip install "${dependencies[@]}"
+        flit install --deps production
+      fi
+      ;;
+    conda)
+      # Check if conda is installed
+      if ! command -v conda &> /dev/null; then
+        echo "Conda not installed. Please install conda first."
+        exit 1
+      fi
+      
+      # Install dependencies
+      for dep in "${dependencies[@]}"; do
+        if [ -n "$dep" ]; then
+          conda install -y "$dep"
+        fi
+      done
       ;;
     pip)
       if [ "$group" == "dev" ]; then
@@ -324,7 +396,7 @@ main() {
   # Create __init__.py files to solve import issues
   create_init_files
   
-  echo "✅ Lazy Beanstalk deployment setup complete!"
+  echo "Lazy Beanstalk deployment setup complete!"
 }
 
 main "$@"
