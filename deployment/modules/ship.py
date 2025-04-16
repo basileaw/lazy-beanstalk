@@ -1,18 +1,18 @@
-# deployment/modules/ship.py
+# ship.py
 
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
 """
 
 import os
-import tempfile
-import zipfile
-import time
-import fnmatch
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any, Optional
 import yaml
+import time
+import zipfile
+import fnmatch
+import tempfile
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Optional, Any
 from botocore.exceptions import ClientError
 
 from . import support
@@ -20,7 +20,6 @@ from .support import DeploymentError
 from .setup import (
     ConfigurationManager,
     ClientManager,
-    ProgressIndicator,
     logger,
     get_eb_cli_platform_name,
 )
@@ -28,7 +27,7 @@ from .setup import (
 
 def create_app_bundle() -> str:
     """Create a ZIP archive of application files based on .ebignore."""
-    ProgressIndicator.start("Creating application bundle")
+    logger.info("Creating application bundle")
     project_root = ConfigurationManager.get_project_root()
     ebignore_path = project_root / ".ebignore"
 
@@ -100,11 +99,9 @@ def create_app_bundle() -> str:
                 if not excluded and not rel_path == ".ebignore":
                     zipf.write(file_path, rel_path)
                     file_count += 1
-                    # Show progress occasionally
-                    if file_count % 50 == 0:
-                        ProgressIndicator.step()
+                    # No progress indicator needed - removed
 
-    ProgressIndicator.complete(f"added {file_count} files")
+    logger.info(f"added {file_count} files")
     return str(bundle_path)
 
 
@@ -154,7 +151,7 @@ def ensure_instance_profile(config: Dict[str, Any]) -> None:
 def wait_for_version(app_name: str, version: str) -> None:
     """Wait for application version to be processed."""
     eb_client = ClientManager.get_client("elasticbeanstalk")
-    ProgressIndicator.start("Waiting for application version to be processed")
+    logger.info("Waiting for application version to be processed")
 
     while True:
         versions = eb_client.describe_application_versions(
@@ -170,7 +167,6 @@ def wait_for_version(app_name: str, version: str) -> None:
         elif status == "FAILED":
             raise DeploymentError(f"Version {version} processing failed")
 
-        ProgressIndicator.step()
         time.sleep(3)
 
 
@@ -395,7 +391,7 @@ def deploy_application(config: Dict[str, Any]) -> None:
     key = f"app-{version}.zip"
 
     # Upload to S3
-    ProgressIndicator.start(f"Uploading application bundle to S3")
+    logger.info(f"Uploading application bundle to S3")
     with open(bundle, "rb") as f:
         s3_client.upload_fileobj(f, bucket, key)
 

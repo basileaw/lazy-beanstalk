@@ -1,4 +1,4 @@
-# modules/support.py
+# support.py
 
 """Common utilities for Elastic Beanstalk deployment operations."""
 
@@ -14,8 +14,6 @@ COMMAND_START_TIME = datetime.utcnow()
 from .setup import (
     ConfigurationManager,
     ClientManager,
-    ProgressIndicator,
-    load_policy,
     logger,
 )
 
@@ -85,7 +83,7 @@ def print_events(env_name: str, after: Optional[datetime], seen: Set[str]) -> da
 
 def wait_for_env_status(env_name: str, target: str) -> None:
     """Wait for environment to reach target status."""
-    ProgressIndicator.start(f"Waiting for environment to be {target}")
+    logger.info(f"Waiting for environment to be {target}")
     eb_client = ClientManager.get_client("elasticbeanstalk")
     last_time, seen = None, set()
     status = None
@@ -98,7 +96,7 @@ def wait_for_env_status(env_name: str, target: str) -> None:
 
             if not envs:
                 if target == "Terminated":
-                    ProgressIndicator.complete("environment terminated")
+                    logger.info("environment terminated")
                     break
                 raise DeploymentError(f"Environment {env_name} not found")
 
@@ -106,22 +104,19 @@ def wait_for_env_status(env_name: str, target: str) -> None:
             last_time = print_events(env_name, last_time, seen)
 
             if status == target:
-                ProgressIndicator.complete(f"reached {target} state")
+                logger.info(f"reached {target} state")
                 break
             if status == "Failed":
                 raise DeploymentError(f"Environment failed to reach {target} status")
-
-            # Show progress
-            ProgressIndicator.step()
 
         except ClientError as e:
             if (
                 target == "Terminated"
                 and e.response["Error"]["Code"] == "ResourceNotFoundException"
             ):
-                ProgressIndicator.complete("environment terminated")
+                logger.info("environment terminated")
                 break
-            ProgressIndicator.complete("error")
+            logger.info("error")
             raise
 
         time.sleep(5)
@@ -185,7 +180,7 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
             iam_client.create_role(
                 RoleName=role_name,
                 AssumeRolePolicyDocument=json.dumps(
-                    load_policy(policies["trust_policy"])
+                    ConfigurationManager.load_policy(policies["trust_policy"])
                 ),
             )
             logger.info(f"Role {role_name} created successfully")
@@ -232,7 +227,7 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
             # Load the policy document
             logger.info(f"Loading policy from {policy_file}")
             try:
-                policy_doc = load_policy(policy_file)
+                policy_doc = ConfigurationManager.load_policy(policy_file)
             except Exception as e:
                 logger.error(f"Failed to load policy {policy_file}: {e}")
                 continue

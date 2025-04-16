@@ -9,7 +9,6 @@ from .support import DeploymentError, aws_handler
 from .setup import (
     ConfigurationManager,
     ClientManager,
-    ProgressIndicator,
     logger,
     ensure_env_in_gitignore,
 )
@@ -41,8 +40,8 @@ def prompt_for_missing_oidc_vars(config):
 
     # Show header for prompts
     if missing:
-        ProgressIndicator.start("OIDC configuration variables required")
-        ProgressIndicator.complete("please provide the following values")
+        logger.info("OIDC configuration variables required")
+        logger.info("please provide the following values")
 
     # Prompt for missing variables
     new_vars = {}
@@ -155,14 +154,14 @@ def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
     eb_client = ClientManager.get_client("elasticbeanstalk")
     elbv2_client = ClientManager.get_client("elbv2")
 
-    ProgressIndicator.start("Finding HTTPS listener")
+    logger.info("Finding HTTPS listener")
 
     # Check if environment exists
     envs = eb_client.describe_environments(
         EnvironmentNames=[env_name], IncludeDeleted=False
     )["Environments"]
     if not envs:
-        ProgressIndicator.complete("environment not found")
+        logger.info("environment not found")
         raise DeploymentError(f"Environment {env_name} not found")
 
     # Find the load balancer for the environment
@@ -184,7 +183,7 @@ def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
             break
 
     if not env_lb:
-        ProgressIndicator.complete("load balancer not found")
+        logger.info("load balancer not found")
         raise DeploymentError(f"No load balancer found for environment {env_name}")
 
     # Find the HTTPS listener
@@ -194,7 +193,7 @@ def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
     https_listener = next((l for l in listeners if l["Port"] == 443), None)
 
     if not https_listener:
-        ProgressIndicator.complete("HTTPS not configured")
+        logger.info("HTTPS not configured")
         raise DeploymentError("HTTPS listener not found. Run 'secure' command first.")
 
     return https_listener["ListenerArn"], env_lb["LoadBalancerArn"]
@@ -204,13 +203,13 @@ def find_listener_arn(env_name: str) -> Tuple[Optional[str], Optional[str]]:
 def find_target_group_arn(load_balancer_arn: str) -> str:
     """Get target group ARN for the load balancer."""
     elbv2_client = ClientManager.get_client("elbv2")
-    ProgressIndicator.start("Finding target group")
+    logger.info("Finding target group")
 
     target_groups = elbv2_client.describe_target_groups(
         LoadBalancerArn=load_balancer_arn
     )["TargetGroups"]
     if not target_groups:
-        ProgressIndicator.complete("not found")
+        logger.info("not found")
         raise DeploymentError("No target groups found for load balancer")
 
     return target_groups[0]["TargetGroupArn"]
@@ -278,7 +277,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
 
     # Clean existing rules
     elbv2_client = ClientManager.get_client("elbv2")
-    ProgressIndicator.start("Removing existing listener rules")
+    logger.info("Removing existing listener rules")
 
     rules_removed = 0
     for rule in elbv2_client.describe_rules(ListenerArn=listener_arn)["Rules"]:
@@ -292,7 +291,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
         logger.info(f"No rules to remove")
 
     # Configure authentication action
-    ProgressIndicator.start("Configuring OIDC authentication")
+    logger.info("Configuring OIDC authentication")
 
     auth_action = {
         "Type": "authenticate-oidc",
@@ -339,7 +338,7 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
     )
 
     # Configure HTTP to HTTPS redirect
-    ProgressIndicator.start("Configuring HTTP to HTTPS redirect")
+    logger.info("Configuring HTTP to HTTPS redirect")
     http_listener = next(
         (
             l
@@ -365,6 +364,6 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
             ],
         )
     else:
-        ProgressIndicator.complete("HTTP listener not found")
+        logger.info("HTTP listener not found")
 
     logger.info(f"OIDC authentication successfully configured for https://{domain}")

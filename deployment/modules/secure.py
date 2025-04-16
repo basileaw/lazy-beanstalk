@@ -10,7 +10,7 @@ from typing import Dict
 
 from . import support
 from .support import DeploymentError
-from .setup import ConfigurationManager, ClientManager, ProgressIndicator, logger
+from .setup import ConfigurationManager, ClientManager, logger
 
 
 @support.aws_handler
@@ -22,7 +22,7 @@ def pick_certificate(acm_client=None) -> str:
     if acm_client is None:
         acm_client = ClientManager.get_client("acm")
 
-    ProgressIndicator.start("Retrieving certificates from ACM")
+    logger.info("Retrieving certificates from ACM")
     certs = acm_client.list_certificates(CertificateStatuses=["ISSUED"])[
         "CertificateSummaryList"
     ]
@@ -61,7 +61,7 @@ def get_hosted_zone_id(domain: str) -> str:
     Return the ID of the best-matching hosted zone for `domain`.
     """
     r53_client = ClientManager.get_client("route53")
-    ProgressIndicator.start(f"Finding Route 53 hosted zone for {domain}")
+    logger.info(f"Finding Route 53 hosted zone for {domain}")
 
     zones = r53_client.list_hosted_zones()["HostedZones"]
     matches = [z for z in zones if domain.endswith(z["Name"].rstrip("."))]
@@ -71,7 +71,7 @@ def get_hosted_zone_id(domain: str) -> str:
 
     # Return the most specific matching zone
     best_zone = max(matches, key=lambda z: len(z["Name"]))
-    ProgressIndicator.complete(f"Found zone: {best_zone['Name']}")
+    logger.info(f"Found zone: {best_zone['Name']}")
 
     return best_zone["Id"]
 
@@ -84,7 +84,7 @@ def ensure_security_group_https(lb_arn: str) -> None:
     ec2_client = ClientManager.get_client("ec2")
     elbv2_client = ClientManager.get_client("elbv2")
 
-    ProgressIndicator.start("Configuring security groups for HTTPS")
+    logger.info("Configuring security groups for HTTPS")
 
     lb = elbv2_client.describe_load_balancers(LoadBalancerArns=[lb_arn])[
         "LoadBalancers"
@@ -150,9 +150,9 @@ def ensure_security_group_https(lb_arn: str) -> None:
             sg_updates += 1
 
     if sg_updates > 0:
-        ProgressIndicator.complete(f"Added {sg_updates} rules")
+        logger.info(f"Added {sg_updates} rules")
     else:
-        ProgressIndicator.complete("Already configured")
+        logger.info("Already configured")
 
 
 @support.aws_handler
@@ -162,7 +162,7 @@ def create_dns_record(zone_id: str, domain: str, lb_dns: str) -> dict:
     """
     r53_client = ClientManager.get_client("route53")
 
-    ProgressIndicator.start(f"Updating DNS record for {domain}")
+    logger.info(f"Updating DNS record for {domain}")
 
     resp = r53_client.change_resource_record_sets(
         HostedZoneId=zone_id,
@@ -181,7 +181,7 @@ def create_dns_record(zone_id: str, domain: str, lb_dns: str) -> dict:
         },
     )
 
-    ProgressIndicator.complete("updated")
+    logger.info("updated")
     return resp
 
 
@@ -191,13 +191,12 @@ def wait_for_dns_sync(change_id: str) -> None:
     """
     r53_client = ClientManager.get_client("route53")
 
-    ProgressIndicator.start("Waiting for DNS changes to propagate")
+    logger.info("Waiting for DNS changes to propagate")
 
     while True:
         status = r53_client.get_change(Id=change_id)["ChangeInfo"]["Status"]
         if status == "INSYNC":
             break
-        ProgressIndicator.step()
         time.sleep(10)
 
 
@@ -217,7 +216,7 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     logger.info(f"Using domain: {domain}")
 
     # Find load balancer
-    ProgressIndicator.start("Locating environment load balancer")
+    logger.info("Locating environment load balancer")
     lb_arn = support.find_environment_load_balancer(env_name)
     if not lb_arn:
         raise DeploymentError("No load balancer found for environment")

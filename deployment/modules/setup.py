@@ -1,4 +1,4 @@
-# deployment/modules/setup.py
+# setup.py
 
 """
 Configuration utilities for Elastic Beanstalk deployment operations.
@@ -30,32 +30,8 @@ class ConfigurationError(Exception):
     pass
 
 
-class ProgressIndicator:
-    """Simple progress logging without animations."""
-
-    @staticmethod
-    def start(message):
-        """Log the start of an operation."""
-        logger.info(f"{message}")
-
-    @staticmethod
-    def step(char=None):
-        """No-op for compatibility."""
-        pass
-
-    @staticmethod
-    def complete(message=None):
-        """Log the completion of an operation."""
-        if message:
-            logger.info(f"{message}")
-        else:
-            logger.info("Complete")
-
-
 class ClientManager:
-    """
-    AWS client manager that handles caching and consistent region usage.
-    """
+    """AWS client manager that handles caching and consistent region usage."""
 
     _clients = {}
     _session = None
@@ -112,7 +88,6 @@ class ClientManager:
                 "ec2",
                 "sts",
             ]
-
         return {service: cls.get_client(service) for service in services}
 
 
@@ -136,8 +111,6 @@ class ConfigurationManager:
     def get_project_root(cls) -> Path:
         """Return the project root directory."""
         if not cls._project_root:
-            # Navigate up from the current file to find the project root
-            # configure.py is in deployment/modules/, so we need to go up two levels
             cls._project_root = Path(__file__).parent.parent.parent
         return cls._project_root
 
@@ -156,9 +129,7 @@ class ConfigurationManager:
     @classmethod
     def get_config_path(cls) -> Path:
         """Return the path to the config.yml file."""
-        return (
-            cls.get_project_root() / "config.yml"
-        )  # Updated to point to config.yml at root
+        return cls.get_project_root() / "config.yml"
 
     @classmethod
     def get_policies_dir(cls) -> Path:
@@ -463,7 +434,7 @@ class ConfigurationManager:
             region = ClientManager.get_region()
             eb_client = ClientManager.get_client("elasticbeanstalk")
 
-            ProgressIndicator.start("Retrieving available solution stacks")
+            logger.info("Retrieving available solution stacks")
             solution_stacks = eb_client.list_available_solution_stacks()[
                 "SolutionStacks"
             ]
@@ -682,25 +653,6 @@ def get_eb_cli_platform_name(platform: str) -> str:
     return default_platform
 
 
-def get_aws_clients(config: Dict) -> Dict:
-    """
-    Initialize and return AWS clients using the configuration.
-    Legacy function that uses ClientManager internally for compatibility.
-
-    Args:
-        config: The loaded configuration
-
-    Returns:
-        Dict: Dictionary of AWS clients
-    """
-    # Initialize client manager with the region from config
-    region = config["aws"]["region"]
-    ClientManager.initialize(region)
-
-    # Return all clients
-    return ClientManager.get_all_clients()
-
-
 def ensure_env_in_gitignore() -> None:
     """Ensure .env is listed in .gitignore file."""
     gitignore_path = ConfigurationManager.get_project_root() / ".gitignore"
@@ -723,58 +675,3 @@ def ensure_env_in_gitignore() -> None:
             if not content.endswith("\n"):
                 f.write("\n")
             f.write(".env\n")
-
-
-# Legacy functions that use ConfigurationManager internally for compatibility
-
-
-def get_project_root() -> Path:
-    """Return the project root directory."""
-    return ConfigurationManager.get_project_root()
-
-
-def get_project_name() -> str:
-    """Return the name of the root-level folder (project)."""
-    return ConfigurationManager.get_project_name()
-
-
-def get_deployment_dir() -> Path:
-    """Return the deployment directory."""
-    return ConfigurationManager.get_deployment_dir()
-
-
-def get_config_path() -> Path:
-    """Return the path to the config.yml file."""
-    return (
-        ConfigurationManager.get_project_root() / "config.yml"
-    )  # Updated to match ConfigurationManager
-
-
-def get_policies_dir() -> Path:
-    """Return the path to the policies directory."""
-    return ConfigurationManager.get_policies_dir()
-
-
-def get_policy_path(filename: str) -> Path:
-    """Return the path to a specific policy file."""
-    return ConfigurationManager.get_policy_path(filename)
-
-
-def load_policy(filename: str) -> Dict:
-    """Load a JSON policy file."""
-    return ConfigurationManager.load_policy(filename)
-
-
-def get_aws_region() -> str:
-    """Get the AWS region from multiple sources."""
-    return ConfigurationManager.get_aws_region()
-
-
-def get_latest_docker_platform() -> str:
-    """Get the latest Docker platform from Elastic Beanstalk."""
-    return ConfigurationManager.get_latest_docker_platform()
-
-
-def load_config(reset_cache=False) -> Dict:
-    """Load configuration from YAML and replace placeholders."""
-    return ConfigurationManager.load_config(reset_cache)
