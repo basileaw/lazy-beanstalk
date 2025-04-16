@@ -272,22 +272,21 @@ main() {
   # Create app/main.py if it doesn't exist
   mkdir -p app
   if [ ! -f "app/main.py" ]; then
-    if [ "$DEMO_MODE" == true ] && [ -f "$SOURCE_DIR/app/main.py" ]; then
-      cp "$SOURCE_DIR/app/main.py" "app/main.py"
-      echo "Created app/main.py with demo content"
-    else
-      # Create empty main.py with minimal content
-      cat > "app/main.py" << EOF
-def main():
-    print("Hello from Lazy Beanstalk!")
-
-if __name__ == "__main__":
-    main()
-EOF
-      echo "Created minimal app/main.py"
-    fi
+      if [ "$DEMO_MODE" == true ] && [ -d "$SOURCE_DIR/app" ]; then
+          # Copy entire app directory
+          echo "Copying demo app directory..."
+          for file in $(find "$SOURCE_DIR/app" -type f); do
+              rel_path="${file#$SOURCE_DIR/app/}"
+              copy_file "$file" "app/$rel_path"
+          done
+          echo "Copied complete demo app directory"
+      else
+          # Create empty main.py
+          touch "app/main.py"
+          echo "Created empty app/main.py"
+      fi
   else
-    echo "app/main.py already exists, leaving unchanged"
+      echo "app/main.py already exists, leaving unchanged"
   fi
   
   # Extract and install dev dependencies
