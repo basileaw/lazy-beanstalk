@@ -1,4 +1,4 @@
-# ship.py
+# deployment/modules/ship.py
 
 """
 Handles deployment of Elastic Beanstalk application and associated AWS resources.
@@ -267,7 +267,7 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
 
 def create_eb_cli_config(config: Dict[str, Any]) -> None:
     """
-    Create EB CLI configuration file from the main config.yml.
+    Create EB CLI configuration file from the main cloud-config.yml.
 
     Args:
         config: The loaded and processed config dictionary
@@ -283,7 +283,7 @@ def create_eb_cli_config(config: Dict[str, Any]) -> None:
     # Check if elasticbeanstalk_cli section exists
     if "elasticbeanstalk_cli" not in config:
         logger.info(
-            "No elasticbeanstalk_cli section found in config.yml, generating default"
+            "No elasticbeanstalk_cli section found in cloud-config.yml, generating default"
         )
         # Use the old method to generate the config
         eb_config = {
