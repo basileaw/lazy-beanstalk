@@ -1,145 +1,96 @@
-# Terminal to Web: Share Your Python Terminal Apps
+# Lazy Beanstalk
 
-## The Problem This Solves
+Lazy Beanstalk is a Python deployment package for AWS Elastic Beanstalk that lets you deploy your Python web applications with minimal effort. Perfect for solo developers and Python beginners who want to quickly share their projects without spending days figuring out cloud deployment.
 
-You've just created a cool terminal-based Python application. Maybe it's:
-- A text-based game
-- A chat interface
-- A data visualization tool
-- A command-line utility with rich terminal UI
+## How It Works
 
-You want to share it with others, but:
-- Not everyone is comfortable with the terminal
-- Setting up Python environments is a hassle
-- Installing dependencies is error-prone
-- You just want people to try it quickly and give feedback
+Lazy Beanstalk provides a simple template for deploying Python applications on AWS Elastic Beanstalk. It handles the complex configuration, infrastructure setup, and deployment process for you. Just install it into your project, run a single command, and your application is live with a public URL.
 
-## The Solution
+### Compatibility with EB CLI
 
-This template turns your terminal application into a web-accessible service. Users can interact with your terminal app through their browser - no installation required!
+Lazy Beanstalk works alongside the standard Elastic Beanstalk CLI. If you're familiar with `eb` commands, you can continue using them after initial deployment. Lazy Beanstalk creates the proper configuration files that make it compatible with standard EB operations.
 
-### How It Works
+### Prerequisites
 
-1. **Your Terminal App (`client.py`)**
-   - Your original Python application that runs in the terminal
-   - Uses packages like `rich`, `curses`, or any terminal-based UI
-   - Remains completely unchanged - we don't modify your code
+- AWS credentials configured (`~/.aws/credentials` or environment variables)
+- Docker Desktop installed locally 
+- Python 3.12 or newer
+- An existing Python web application (or a new one) that you'd like to deploy ;) 
 
-2. **Web Interface (`main.py`)**
-   - A simple Fast API server that creates a web gateway
-   - Embeds your terminal in a browser window
-   - Handles all the web-terminal communication
+## Installation
 
-3. **Terminal Bridge (`ttyd`)**
-   - Connects your terminal app to the web
-   - Handles WebSocket connections
-   - Manages terminal sessions
-
-4. **Deployment (AWS Lightsail)**
-   - Runs on AWS Lightsail infrastructure
-   - Provides a public URL
-   - Simple and cost-effective hosting
-
-## Example Use Case
-
-Let's say you've created a quote guessing game (like this template's example):
-```python
-# Your original client.py
-from rich import print
-from rich.panel import Panel
-
-def game_loop():
-    print(Panel("Guess the author of this quote!"))
-    # ... your game logic ...
-```
-
-Without modifying your code, this template:
-1. Packages it into a container
-2. Deploys it to AWS Lightsail
-3. Gives you a public URL
-4. Users see and interact with your terminal app in their browser
-
-## Local Development
-
-You can develop and test locally using Docker Compose:
+Install Lazy Beanstalk directly into your project with a single command 
 
 ```bash
-docker-compose up
+curl -sSL https://raw.githubusercontent.com/anotherbazeinthewall/lazy-beanstalk/main/installer.sh | bash
 ```
 
-This runs:
-- Your terminal app in a container
-- The web interface locally
-- Both connected through ttyd
+This adds a `deployment` directory, Dockerfile, .dockerignore, .ebignore and Makefile (that you're free to customize at your discretion)
 
-Visit `http://localhost:5000` to see your app running locally.
+## Usage
 
-## Deployment
-
-When you're ready to share:
-
+The Makefile defines a series of tasks for testing, shipping, securing and tearing down your application. 
 ```bash
-# Deploy container to Lightsail
-aws lightsail push-container-image --service-name your-service-name --label your-container --image your-image
-
-# Deploy the container service
-aws lightsail create-container-service-deployment --service-name your-service-name --containers ...
+make serve
 ```
+Runs your application locally for development testing. The command executes `app/main.py` directly on your local machine, providing a development server with hot-reloading and logging output to your terminal.
+```bash
+make spin
+```
+Runs your application in a Docker container for a production-like test. This builds a Docker image using your project's Dockerfile, auto-detects Python dependencies, mounts AWS credentials, and exposes your application on port 8000.
+```bash
+make ship
+```
+Deploys your application to AWS Elastic Beanstalk. The process creates necessary IAM roles, packages and uploads your code to S3, and creates or updates your Elastic Beanstalk environment. Deployment typically takes 5-10 minutes and outputs your application's URL upon completion.
+```bash
+make secure
+```
+Enables HTTPS for your deployed application. The command configures your load balancer with an HTTPS listener using your AWS Certificate Manager certificates, sets up appropriate security groups, and creates DNS records if your domain matches the certificate.
+```bash
+make shield
+```
+Adds OIDC authentication to your application. This configures your load balancer to handle authentication, securing all paths behind a login requirement. Users will be redirected to your identity provider for authentication before accessing your application.
+```bash
+make scrap
+```
+Removes all AWS resources created by Lazy Beanstalk. The command terminates your environment, deletes IAM roles and S3 buckets, removes HTTPS and OIDC configurations, and cleans up local files. This process takes 5-15 minutes and prevents ongoing AWS charges.
 
-This:
-1. Packages your application
-2. Deploys to AWS Lightsail
-3. Provides a public URL
-4. Sets up HTTPS automatically
+## Configuration
 
-## Project Structure Explained
+Lazy Beanstalk allows for batteries-included deployment, but there are a few ways to customize at your discretion. 
 
-- `client.py` - Your original terminal application
-- `main.py` - Web interface (you don't need to modify this)
-- `start.sh` - Runs both services (terminal + web)
-- `Dockerfile` - Container configuration
-- `docker-compose.yml` - Local development setup
+### Config.yml
 
-## When to Use This
+The `config.yml` file controls all deployment settings. Key variables are automatically filled in:
 
-Perfect for:
-- Prototypes you want feedback on
-- Internal tools that need quick sharing
-- Demos of terminal-based applications
-- Testing ideas without distribution hassle
+- `${PROJECT_NAME}`: Your project directory name
+- `${AWS_REGION}`: Your AWS region
+- `${LATEST_DOCKER_PLATFORM}`: The latest Elastic Beanstalk Docker platform
 
-Not ideal for:
-- Production applications needing authentication
-- High-security requirements
-- Applications requiring local file system access
+### IAM
 
-## Getting Started
+Lazy Beanstalk automatically creates and manages IAM roles for your application. Custom policies can be added to the `deployment/policies` directory as JSON files.
 
-1. Copy these template files into your project
-2. Make sure your terminal app is named `client.py`
-3. Your `pyproject.toml` has your dependencies
-4. Follow deployment instructions
+### OIDC Authentication
 
-## Technical Details
+To use OIDC authentication (with the `shield` command), you'll need to set these environment variables or be ready to enter them when prompted:
 
-- Uses Docker for containerization
-- Nginx handles WebSocket proxying
-- AWS Lightsail for simple container deployment
-- Poetry for Python dependency management
+- `OIDC_CLIENT_ID`: Your OIDC client ID
+- `OIDC_CLIENT_SECRET`: Your OIDC client secret
+- `OIDC_ISSUER`: Your OIDC provider issuer URL
+- `OIDC_AUTH_ENDPOINT`: Authorization endpoint URL
+- `OIDC_TOKEN_ENDPOINT`: Token endpoint URL
+- `OIDC_USERINFO_ENDPOINT`: User info endpoint URL
 
-## Security Note
+These can be stored in a `.env` file (which is automatically added to `.gitignore`).
 
-This template prioritizes ease of sharing over security. For internal or demonstration use only. Add authentication if needed for production use.
+## A Few Considerations
 
-## Cost Considerations
+- Lazy Beanstalk is designed for prototypes and small tools and is not suitable for production-grade applications.
+- Implementing HTTPS/OIDC via an Application Load Balancer can get pricey. 
+- Be cautious with IAM permissions - only add what you need.
+- Never commit `.env` files to version control.
 
-- Runs on AWS Lightsail's container service
-- Predictable, fixed monthly pricing
-- Starts at $7/month for smallest instance
-- Includes data transfer
+## Acknowledgements
 
-## Support and Contributions
-
-- Report issues via GitHub
-- Contributions welcome
-- Template maintained for Python terminal apps
+Chatline was built with plenty of LLM assistance, particularly from [Anthropic](https://github.com/anthropics), [Mistral](https://github.com/mistralai) and [Continue.dev](https://github.com/continuedev/continue).
