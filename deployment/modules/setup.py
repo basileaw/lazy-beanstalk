@@ -11,12 +11,16 @@ import yaml
 import boto3
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-# Set up standardized logging
+# Set up standardized logging with UTC time
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
-logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+logging.Formatter.converter = time.gmtime  # Use UTC time
+logging.basicConfig(
+    level=logging.INFO, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S UTC"
+)
 logger = logging.getLogger("deployment")
 
 
