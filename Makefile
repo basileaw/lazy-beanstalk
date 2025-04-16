@@ -34,7 +34,7 @@ serve:
 spin:
 	@printf "Make => $(BLUE)Running in container$(RESET)\n"
 	@sh -c 'DIR=$${PWD##*/} && \
-	docker rm -f $$DIR-web || true && \
+	docker rm -f $$DIR-web 2>/dev/null || true && \
 	docker buildx build --force-rm=true --no-cache -t $$DIR-web . && \
 	docker run --rm --name $$DIR-web -p 8000:8000 -v ~/.aws:/root/.aws:ro $$DIR-web'
 
