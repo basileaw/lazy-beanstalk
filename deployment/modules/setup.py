@@ -151,10 +151,10 @@ class ConfigurationManager:
 
     @classmethod
     def get_config_path(cls) -> Path:
-        """Return the path to the cloud-config.yml file."""
+        """Return the path to the config.yml file."""
         return (
-            cls.get_project_root() / "cloud-config.yml"
-        )  # Updated to point to cloud-config.yml at root
+            cls.get_project_root() / "config.yml"
+        )  # Updated to point to config.yml at root
 
     @classmethod
     def get_policies_dir(cls) -> Path:
@@ -740,9 +740,9 @@ def get_deployment_dir() -> Path:
 
 
 def get_config_path() -> Path:
-    """Return the path to the cloud-config.yml file."""
+    """Return the path to the config.yml file."""
     return (
-        ConfigurationManager.get_project_root() / "cloud-config.yml"
+        ConfigurationManager.get_project_root() / "config.yml"
     )  # Updated to match ConfigurationManager
 
 

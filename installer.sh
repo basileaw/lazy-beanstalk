@@ -256,8 +256,8 @@ main() {
   if [ -f "$SOURCE_DIR/.ebignore" ]; then
     copy_file "$SOURCE_DIR/.ebignore" ".ebignore"
   fi
-  if [ -f "$SOURCE_DIR/cloud-config.yml" ]; then
-    copy_file "$SOURCE_DIR/cloud-config.yml" "cloud-config.yml"
+  if [ -f "$SOURCE_DIR/config.yml" ]; then
+    copy_file "$SOURCE_DIR/config.yml" "config.yml"
   fi
   if [ -f "$SOURCE_DIR/Dockerfile" ]; then
     copy_file "$SOURCE_DIR/Dockerfile" "Dockerfile"
