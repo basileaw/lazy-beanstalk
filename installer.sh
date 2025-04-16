@@ -253,21 +253,20 @@ main() {
   fi
   
   # Copy root files
-  if [ -f "$SOURCE_DIR/Dockerfile" ]; then
-    copy_file "$SOURCE_DIR/Dockerfile" "Dockerfile"
-  fi
-  if [ -f "$SOURCE_DIR/docker-compose.yml" ]; then
-    copy_file "$SOURCE_DIR/docker-compose.yml" "docker-compose.yml"
-  fi
-  if [ -f "$SOURCE_DIR/Makefile" ]; then
-    copy_file "$SOURCE_DIR/Makefile" "Makefile"
-  fi
-  # Copy ignore files
   if [ -f "$SOURCE_DIR/.ebignore" ]; then
     copy_file "$SOURCE_DIR/.ebignore" ".ebignore"
   fi
+  if [ -f "$SOURCE_DIR/cloud-config.yml" ]; then
+    copy_file "$SOURCE_DIR/cloud-config.yml" "cloud-config.yml"
+  fi
+  if [ -f "$SOURCE_DIR/Dockerfile" ]; then
+    copy_file "$SOURCE_DIR/Dockerfile" "Dockerfile"
+  fi
   if [ -f "$SOURCE_DIR/.dockerignore" ]; then
-    copy_file "$SOURCE_DIR/.dockerignore" ".dockerignore"
+  copy_file "$SOURCE_DIR/.dockerignore" ".dockerignore"
+  fi
+  if [ -f "$SOURCE_DIR/Makefile" ]; then
+    copy_file "$SOURCE_DIR/Makefile" "Makefile"
   fi
   
   # Create app/main.py if it doesn't exist
