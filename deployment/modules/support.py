@@ -9,6 +9,8 @@ from datetime import datetime
 from botocore.exceptions import ClientError
 from typing import Dict, Set, Optional, List, Callable, Tuple, Any
 
+COMMAND_START_TIME = datetime.utcnow()
+
 from .setup import (
     ConfigurationManager,
     ClientManager,
@@ -47,7 +49,16 @@ def aws_handler(func: Callable) -> Callable:
 
 def print_events(env_name: str, after: Optional[datetime], seen: Set[str]) -> datetime:
     """Print and track new environment events."""
+    from datetime import timezone  # Import here for clarity
+
     eb_client = ClientManager.get_client("elasticbeanstalk")
+
+    # If no start time is provided, use the current time with timezone info
+    if after is None:
+        after = datetime.now(timezone.utc)
+    # Make sure 'after' has timezone info
+    elif after.tzinfo is None:
+        after = after.replace(tzinfo=timezone.utc)
 
     kwargs = {"EnvironmentName": env_name, "MaxRecords": 10}
     if after:
@@ -60,10 +71,12 @@ def print_events(env_name: str, after: Optional[datetime], seen: Set[str]) -> da
         # Create a unique key for each event to avoid duplicates
         key = f"{event['EventDate'].isoformat()}-{event['Message']}"
         if key not in seen:
-            print(
-                f"{event['EventDate']:%Y-%m-%d %H:%M:%S} [{event['Severity']}] {event['Message']}"
-            )
+            # Use logger instead of print for consistent formatting
+            logger.info(f"{event['Message']}")
             seen.add(key)
+
+            # Event dates from AWS API are timezone-aware, so we need to make sure
+            # our comparison variable is also timezone-aware
             if not latest_time or event["EventDate"] > latest_time:
                 latest_time = event["EventDate"]
 
