@@ -31,7 +31,7 @@ endef
 serve:
 	$(call task,python app/main.py)
 
-serve-container:
+spin:
 	@printf "Make => $(BLUE)Running in container$(RESET)\n"
 	@sh -c 'DIR=$${PWD##*/} && \
 	docker rm -f $$DIR-web || true && \
