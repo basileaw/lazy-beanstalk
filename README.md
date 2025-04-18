@@ -93,4 +93,4 @@ These can be stored in a `.env` file (which is automatically added to `.gitignor
 
 ## Acknowledgements
 
-Chatline was built with plenty of LLM assistance, particularly from [Anthropic](https://github.com/anthropics), [Mistral](https://github.com/mistralai) and [Continue.dev](https://github.com/continuedev/continue).
+Lazy Beanstalk was built with plenty of LLM assistance, particularly from [Anthropic](https://github.com/anthropics), [Mistral](https://github.com/mistralai) and [Continue.dev](https://github.com/continuedev/continue).

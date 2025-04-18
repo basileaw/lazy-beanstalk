@@ -1,24 +1,22 @@
 # pyproject.toml
 
-[project]
-authors = [{name = "Alex Basile", email = "basileaw@gmail.com"}]
-dependencies = [
-  "terminaide>=0.1.1",
-  "chatline>=0.2.0",
-]
-description = "A template for deploying Python web apps to AWS Elastic Beanstalk"
+[tool.poetry]
 name = "lazy-beanstalk"
-requires-python = "^3.12"
 version = "0.0.0"
+description = "A template for deploying Python web apps to AWS Elastic Beanstalk"
+authors = ["Alex Basile <basileaw@gmail.com>"]
 
-[project.optional-dependencies]
-dev = [
-  "pyaml (>=25.1.0,<26.0.0)",
-  "botocore (>=1.37.34,<2.0.0)",
-  "boto3 (>=1.37.34,<2.0.0)",
-  "click (>=8.1.8,<9.0.0)",
-]
+[tool.poetry.dependencies]
+python = "^3.12"
+terminaide = ">=0.1.1"
+chatline = ">=0.2.0"
+
+[tool.poetry.group.dev.dependencies]
+pyaml = ">=25.1.0,<26.0.0"
+botocore = ">=1.37.34,<2.0.0"
+boto3 = ">=1.37.34,<2.0.0"
+click = ">=8.1.8,<9.0.0"
 
 [build-system]
-build-backend = "poetry.core.masonry.api"
 requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
