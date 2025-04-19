@@ -12,10 +12,10 @@ terminaide = ">=0.1.1"
 chatline = ">=0.2.0"
 
 [tool.poetry.group.dev.dependencies]
-pyaml = ">=25.1.0,<26.0.0"
 botocore = ">=1.37.34,<2.0.0"
 boto3 = ">=1.37.34,<2.0.0"
 click = ">=8.1.8,<9.0.0"
+pyyaml = "^6.0.2"
 
 [build-system]
 requires = ["poetry-core"]

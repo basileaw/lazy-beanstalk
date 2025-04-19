@@ -132,7 +132,7 @@ def check_env_exists() -> bool:
 
 def get_env_settings(config: Dict) -> List[Dict[str, str]]:
     """Get environment settings from config."""
-    return [
+    settings = [
         {
             "Namespace": "aws:autoscaling:launchconfiguration",
             "OptionName": "IamInstanceProfile",
@@ -159,6 +159,47 @@ def get_env_settings(config: Dict) -> List[Dict[str, str]]:
             "Value": str(config["instance"]["autoscaling"]["max_instances"]),
         },
     ]
+
+    # Add spot instance configuration if enabled in config
+    if "spot_options" in config["instance"] and config["instance"]["spot_options"].get(
+        "enabled", False
+    ):
+        settings.append(
+            {
+                "Namespace": "aws:ec2:instances",
+                "OptionName": "EnableSpot",
+                "Value": "true",
+            }
+        )
+
+        # If you want to make all instances spot (no on-demand base)
+        settings.append(
+            {
+                "Namespace": "aws:ec2:instances",
+                "OptionName": "SpotFleetOnDemandBase",
+                "Value": "0",
+            }
+        )
+
+        settings.append(
+            {
+                "Namespace": "aws:ec2:instances",
+                "OptionName": "SpotFleetOnDemandAboveBasePercentage",
+                "Value": "0",
+            }
+        )
+
+        # If a max price is specified, add it
+        if "max_price" in config["instance"]["spot_options"]:
+            settings.append(
+                {
+                    "Namespace": "aws:ec2:instances",
+                    "OptionName": "SpotMaxPrice",
+                    "Value": str(config["instance"]["spot_options"]["max_price"]),
+                }
+            )
+
+    return settings
 
 
 @aws_handler

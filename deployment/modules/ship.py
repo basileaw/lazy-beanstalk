@@ -16,7 +16,6 @@ from typing import Dict, Optional, Any
 from botocore.exceptions import ClientError
 
 from . import support
-from .support import DeploymentError
 from .setup import (
     ConfigurationManager,
     ClientManager,
@@ -159,13 +158,13 @@ def wait_for_version(app_name: str, version: str) -> None:
         )["ApplicationVersions"]
 
         if not versions:
-            raise DeploymentError(f"Version {version} not found")
+            raise support.DeploymentError(f"Version {version} not found")
 
         status = versions[0]["Status"]
         if status == "PROCESSED":
             break
         elif status == "FAILED":
-            raise DeploymentError(f"Version {version} processing failed")
+            raise support.DeploymentError(f"Version {version} processing failed")
 
         time.sleep(3)
 
