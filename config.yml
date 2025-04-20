@@ -54,6 +54,13 @@ iam:
     ####   - bedrock.json
     ####   - s3-access.json
 
+## HTTPS Configuration
+https:
+  domain_mode: "subdomain"  # Options: "subdomain" (default), "root", "custom"
+  # Only used when domain_mode is "custom"
+  custom_subdomain: ""  # Example: "api" would result in "api.example.com"
+  ttl: 300  # Time-to-live in seconds for DNS records
+
 ## OIDC Configuration
 ### Required environment variables: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER,
 ### OIDC_AUTH_ENDPOINT, OIDC_TOKEN_ENDPOINT, OIDC_USERINFO_ENDPOINT

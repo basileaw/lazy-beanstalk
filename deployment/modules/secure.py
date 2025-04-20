@@ -3,10 +3,11 @@
 """
 Secure your Elastic Beanstalk environment via HTTPS using ACM and Route 53.
 Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
+Supports subdomains, root domains, and custom subdomains.
 """
 
 import time
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 from . import support
 from .support import DeploymentError
@@ -53,6 +54,47 @@ def pick_certificate(acm_client=None) -> str:
         except ValueError:
             pass
         print("Invalid selection. Try again.")
+
+
+def get_domain_from_certificate(cert_domain: str, config: Dict) -> str:
+    """
+    Determine the domain to use based on certificate domain and configuration.
+
+    Args:
+        cert_domain: Domain name from the certificate
+        config: Configuration dictionary
+
+    Returns:
+        Domain name to use for HTTPS
+    """
+    project_name = ConfigurationManager.get_project_name()
+    https_config = config.get("https", {})
+    domain_mode = https_config.get("domain_mode", "subdomain")
+
+    if domain_mode == "root":
+        # Remove wildcard and use root domain
+        return cert_domain.replace("*.", "")
+    elif domain_mode == "custom":
+        # Use custom subdomain if provided
+        custom_subdomain = https_config.get("custom_subdomain", "")
+        if custom_subdomain:
+            if "*." in cert_domain:
+                return f"{custom_subdomain}.{cert_domain.replace('*.', '')}"
+            else:
+                logger.warning(
+                    f"Certificate domain '{cert_domain}' doesn't have a wildcard. "
+                    f"Custom subdomain '{custom_subdomain}' may not be covered by this certificate."
+                )
+                return f"{custom_subdomain}.{cert_domain}"
+        else:
+            logger.warning(
+                "Custom domain mode selected but no custom_subdomain provided. "
+                "Falling back to subdomain mode."
+            )
+            return cert_domain.replace("*", project_name)
+    else:  # subdomain (default)
+        # Replace wildcard with project name (original behavior)
+        return cert_domain.replace("*", project_name)
 
 
 @support.aws_handler
@@ -156,29 +198,99 @@ def ensure_security_group_https(lb_arn: str) -> None:
 
 
 @support.aws_handler
-def create_dns_record(zone_id: str, domain: str, lb_dns: str) -> dict:
+def create_dns_record(zone_id: str, domain: str, lb_dns: str, config: Dict) -> dict:
     """
-    UPSERT a CNAME record pointing `domain` to `lb_dns`.
+    Create a DNS record pointing `domain` to `lb_dns`.
+
+    Args:
+        zone_id: Route 53 hosted zone ID
+        domain: Domain name to create record for
+        lb_dns: Load balancer DNS name
+        config: Configuration dictionary
+
+    Returns:
+        Response from Route 53 API
     """
     r53_client = ClientManager.get_client("route53")
+    elbv2_client = ClientManager.get_client("elbv2")
+    https_config = config.get("https", {})
 
-    logger.info(f"Updating DNS record for {domain}")
+    # Get TTL from config
+    ttl = https_config.get("ttl", 300)
 
-    resp = r53_client.change_resource_record_sets(
-        HostedZoneId=zone_id,
-        ChangeBatch={
+    # Determine if we're creating a root domain record (no subdomains)
+    is_root_domain = domain.count(".") == 1 and all(
+        part.isalpha() for part in domain.split(".")
+    )
+
+    logger.info(
+        f"Updating DNS record for {domain} (type: {'A' if is_root_domain else 'CNAME'})"
+    )
+
+    # For root domains with Application Load Balancers, we should use an A record with Alias
+    if is_root_domain:
+        # We need to find the load balancer's canonical hosted zone ID
+        # Extract the load balancer ID from the DNS name
+        lb_name = lb_dns.split(".")[0]
+
+        # Find matching load balancer to get its canonical hosted zone ID
+        lbs = elbv2_client.describe_load_balancers()["LoadBalancers"]
+        matching_lb = next((lb for lb in lbs if lb["DNSName"] == lb_dns), None)
+
+        if not matching_lb:
+            logger.warning(f"Could not find load balancer with DNS name {lb_dns}")
+            # Fall back to CNAME record
+            logger.info(f"Falling back to CNAME record for {domain}")
+            change_batch = {
+                "Changes": [
+                    {
+                        "Action": "UPSERT",
+                        "ResourceRecordSet": {
+                            "Name": domain,
+                            "Type": "CNAME",
+                            "TTL": ttl,
+                            "ResourceRecords": [{"Value": lb_dns}],
+                        },
+                    }
+                ]
+            }
+        else:
+            # Use A record with Alias for root domain
+            change_batch = {
+                "Changes": [
+                    {
+                        "Action": "UPSERT",
+                        "ResourceRecordSet": {
+                            "Name": domain,
+                            "Type": "A",
+                            "AliasTarget": {
+                                "HostedZoneId": matching_lb["CanonicalHostedZoneId"],
+                                "DNSName": lb_dns,
+                                "EvaluateTargetHealth": True,
+                            },
+                        },
+                    }
+                ]
+            }
+    else:
+        # Use standard CNAME record (works for subdomains)
+        change_batch = {
             "Changes": [
                 {
                     "Action": "UPSERT",
                     "ResourceRecordSet": {
                         "Name": domain,
                         "Type": "CNAME",
-                        "TTL": 300,
+                        "TTL": ttl,
                         "ResourceRecords": [{"Value": lb_dns}],
                     },
                 }
             ]
-        },
+        }
+
+    resp = r53_client.change_resource_record_sets(
+        HostedZoneId=zone_id,
+        ChangeBatch=change_batch,
     )
 
     logger.info("updated")
@@ -212,7 +324,10 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     # Get ACM certificate details
     acm_client = ClientManager.get_client("acm")
     cert = acm_client.describe_certificate(CertificateArn=cert_arn)["Certificate"]
-    domain = cert["DomainName"].replace("*", project_name)
+    cert_domain = cert["DomainName"]
+
+    # Determine the domain to use based on configuration
+    domain = get_domain_from_certificate(cert_domain, config)
     logger.info(f"Using domain: {domain}")
 
     # Find load balancer
@@ -234,7 +349,7 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     # Set up DNS
     logger.info("Configuring DNS")
     zone_id = get_hosted_zone_id(domain)
-    resp = create_dns_record(zone_id, domain, lb["DNSName"])
+    resp = create_dns_record(zone_id, domain, lb["DNSName"], config)
     wait_for_dns_sync(resp["ChangeInfo"]["Id"])
 
     logger.info(f"HTTPS configuration complete!")

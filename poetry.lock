@@ -56,17 +56,17 @@ lxml = ["lxml"]
 
 [[package]]
 name = "boto3"
-version = "1.37.36"
+version = "1.37.37"
 description = "The AWS SDK for Python"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "boto3-1.37.36-py3-none-any.whl", hash = "sha256:1ff9a15413b9a07d147ac143ad5eb7d1935ea0db96757211b5e6e148b1399850"},
-    {file = "boto3-1.37.36.tar.gz", hash = "sha256:3012bb083a7d7653f117a1d53bdd8a4185b59afed74422eaa32d06f55bd411ee"},
+    {file = "boto3-1.37.37-py3-none-any.whl", hash = "sha256:d125cb11e22817f7a2581bade4bf7b75247b401888890239ceb5d3e902ccaf38"},
+    {file = "boto3-1.37.37.tar.gz", hash = "sha256:752d31105a45e3e01c8c68471db14ae439990b75a35e72b591ca528e2575b28f"},
 ]
 
 [package.dependencies]
-botocore = ">=1.37.36,<1.38.0"
+botocore = ">=1.37.37,<1.38.0"
 jmespath = ">=0.7.1,<2.0.0"
 s3transfer = ">=0.11.0,<0.12.0"
 
@@ -75,13 +75,13 @@ crt = ["botocore[crt] (>=1.21.0,<2.0a0)"]
 
 [[package]]
 name = "botocore"
-version = "1.37.36"
+version = "1.37.37"
 description = "Low-level, data-driven core of boto 3."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "botocore-1.37.36-py3-none-any.whl", hash = "sha256:3dcc41a40a868f599bd9ea64f78c6640025df7810c939505d859979e4688b1ae"},
-    {file = "botocore-1.37.36.tar.gz", hash = "sha256:89cf1ca101432adc391e5604ab45851346b8f3a72e5a468fa0ec7a99a5ea3efc"},
+    {file = "botocore-1.37.37-py3-none-any.whl", hash = "sha256:eb730ff978f47c02f0c8ed07bccdc0db6d8fa098ed32ac31bee1da0e9be480d1"},
+    {file = "botocore-1.37.37.tar.gz", hash = "sha256:3eadde6fed95c4cb469cc39d1c3558528b7fa76d23e7e16d4bddc77250431a64"},
 ]
 
 [package.dependencies]
@@ -720,13 +720,13 @@ full = ["httpx (>=0.27.0,<0.29.0)", "itsdangerous", "jinja2", "python-multipart 
 
 [[package]]
 name = "terminaide"
-version = "0.2.0"
+version = "0.2.1"
 description = "Serve Python CLI applications in the browser using ttyd"
 optional = false
 python-versions = ">=3.12"
 files = [
-    {file = "terminaide-0.2.0-py3-none-any.whl", hash = "sha256:0e1abb6042d2ab05f21e71335d42310781ae1af37b6a65e561fbc9a53edffb58"},
-    {file = "terminaide-0.2.0.tar.gz", hash = "sha256:071ff79b3f2d9f6d36d92b052c1de8f1a13b24dfe69f1194c7e9606ae71b651b"},
+    {file = "terminaide-0.2.1-py3-none-any.whl", hash = "sha256:ad5d956f4c615239c44ec74aeb660323efa901c7580b77be15278b5283f55884"},
+    {file = "terminaide-0.2.1.tar.gz", hash = "sha256:c6b71b3805f4b0430a60843b1b05054913514f0319ae92461a7b5ceecea225db"},
 ]
 
 [package.dependencies]
@@ -739,9 +739,6 @@ readchar = ">=4.2.1"
 rich = ">=14.0.0"
 uvicorn = ">=0.24.0"
 websockets = ">=12.0"
-
-[package.extras]
-dev = ["docker (>=7.1.0)"]
 
 [[package]]
 name = "typing-extensions"
@@ -787,13 +784,13 @@ zstd = ["zstandard (>=0.18.0)"]
 
 [[package]]
 name = "uvicorn"
-version = "0.34.1"
+version = "0.34.2"
 description = "The lightning-fast ASGI server."
 optional = false
 python-versions = ">=3.9"
 files = [
-    {file = "uvicorn-0.34.1-py3-none-any.whl", hash = "sha256:984c3a8c7ca18ebaad15995ee7401179212c59521e67bfc390c07fa2b8d2e065"},
-    {file = "uvicorn-0.34.1.tar.gz", hash = "sha256:af981725fc4b7ffc5cb3b0e9eda6258a90c4b52cb2a83ce567ae0a7ae1757afc"},
+    {file = "uvicorn-0.34.2-py3-none-any.whl", hash = "sha256:deb49af569084536d269fe0a6d67e3754f104cf03aba7c11c40f01aadf33c403"},
+    {file = "uvicorn-0.34.2.tar.gz", hash = "sha256:0e929828f6186353a80b58ea719861d2629d766293b6d19baf086ba31d4f3328"},
 ]
 
 [package.dependencies]
@@ -895,4 +892,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "da8923c568029cdb0cc5f0d17ee5bd5b9e2d55e48ad0640c3917aa29bdfae7c3"
+content-hash = "cc315657f4d874cf03b4c414c978ed0999440e3a4eba7bc54195b48145aa908c"

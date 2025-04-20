@@ -3,12 +3,13 @@
 """Clean up Elastic Beanstalk environment and associated resources."""
 
 import shutil
-from typing import Dict
+from typing import Dict, Optional
 from botocore.exceptions import ClientError
 
 from . import support
 from .support import DeploymentError
 from .setup import ConfigurationManager, ClientManager, logger
+from .secure import get_domain_from_certificate  # Import the function we created
 
 
 def cleanup_local_config() -> None:
@@ -129,6 +130,11 @@ def cleanup_https(env_name: str, project_name: str) -> None:
     elbv2_client = ClientManager.get_client("elbv2")
     r53_client = ClientManager.get_client("route53")
 
+    # Load configuration directly from ConfigurationManager
+    # This is the fix for the error
+    config = ConfigurationManager.load_config()
+    https_config = config.get("https", {})
+
     # Find load balancer first
     logger.info("Checking HTTPS configuration")
     lb_arn = support.find_environment_load_balancer(env_name)
@@ -165,13 +171,17 @@ def cleanup_https(env_name: str, project_name: str) -> None:
     # Clean up DNS record
     try:
         if cert_arn:  # Only proceed if we have a certificate ARN
-            # Get the domain from the certificate
+            # Get the domain from the certificate using our new function
             logger.info("Cleaning up DNS record")
             acm_client = ClientManager.get_client("acm")
             cert = acm_client.describe_certificate(CertificateArn=cert_arn)[
                 "Certificate"
             ]
-            domain = cert["DomainName"].replace("*", project_name)
+            cert_domain = cert["DomainName"]
+
+            # Use the same domain determination function as in secure.py
+            domain = get_domain_from_certificate(cert_domain, config)
+            logger.info(f"Looking for DNS record for domain: {domain}")
 
             # Get the load balancer DNS name
             lb = elbv2_client.describe_load_balancers(LoadBalancerArns=[lb_arn])[
@@ -185,16 +195,46 @@ def cleanup_https(env_name: str, project_name: str) -> None:
             )
 
             if zone:
+                # Determine record type - assume A for root domains, CNAME otherwise
+                is_root_domain = domain.count(".") == 1 and all(
+                    part.isalpha() for part in domain.split(".")
+                )
+                record_type = "A" if is_root_domain else "CNAME"
+
+                # Get record set
                 records = r53_client.list_resource_record_sets(
                     HostedZoneId=zone["Id"],
                     StartRecordName=domain,
-                    StartRecordType="CNAME",
+                    StartRecordType=record_type,
                     MaxItems="1",
                 )["ResourceRecordSets"]
 
                 record = next((r for r in records if r["Name"] == f"{domain}."), None)
-                if record and record["ResourceRecords"][0]["Value"] == lb_dns:
-                    logger.info(f"Removing DNS record for {domain}")
+
+                # For CNAME records, we check if it points to our load balancer
+                if (
+                    record
+                    and record.get("Type") == "CNAME"
+                    and record.get("ResourceRecords")
+                    and record["ResourceRecords"][0]["Value"] == lb_dns
+                ):
+                    logger.info(f"Removing CNAME record for {domain}")
+                    r53_client.change_resource_record_sets(
+                        HostedZoneId=zone["Id"],
+                        ChangeBatch={
+                            "Changes": [
+                                {"Action": "DELETE", "ResourceRecordSet": record}
+                            ]
+                        },
+                    )
+                # For A records with Alias, we check if it points to our load balancer
+                elif (
+                    record
+                    and record.get("Type") == "A"
+                    and record.get("AliasTarget")
+                    and record["AliasTarget"].get("DNSName") == lb_dns
+                ):
+                    logger.info(f"Removing A record for {domain}")
                     r53_client.change_resource_record_sets(
                         HostedZoneId=zone["Id"],
                         ChangeBatch={
