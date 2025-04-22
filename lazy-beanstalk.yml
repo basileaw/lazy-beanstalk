@@ -56,7 +56,7 @@ iam:
 
 ## HTTPS Configuration
 https:
-  domain_mode: "subdomain"  # Options: "subdomain" (default), "root", "custom"
+  domain_mode: "sub"  # Options: "sub" (default), "root", "custom"
   # Only used when domain_mode is "custom"
   include_root: false  # Whether to deploy to the root domain when in custom mode
   custom_subdomains: []  # List of subdomains when in custom mode

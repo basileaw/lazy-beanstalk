@@ -109,7 +109,7 @@ def get_domains_from_certificate_config(cert_domain: str, config: Dict) -> List[
     """
     project_name = ConfigurationManager.get_project_name()
     https_config = config.get("https", {})
-    domain_mode = https_config.get("domain_mode", "subdomain")
+    domain_mode = https_config.get("domain_mode", "sub")
     domains = []
 
     root_domain = cert_domain.replace("*.", "")
@@ -117,7 +117,7 @@ def get_domains_from_certificate_config(cert_domain: str, config: Dict) -> List[
     if domain_mode == "root":
         # Root domain mode - just return the root domain
         domains.append(root_domain)
-    elif domain_mode == "subdomain":
+    elif domain_mode == "sub":
         # Subdomain mode - use project name as subdomain
         domains.append(cert_domain.replace("*", project_name))
     elif domain_mode == "custom":

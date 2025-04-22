@@ -334,6 +334,9 @@ main() {
   if [ -f "$SOURCE_DIR/Dockerfile" ]; then
     copy_file "$SOURCE_DIR/Dockerfile" "Dockerfile"
   fi
+  if [ -f "$SOURCE_DIR/docker-compose.yml" ]; then
+    copy_file "$SOURCE_DIR/docker-compose.yml" "docker-compose.yml"
+  fi
   if [ -f "$SOURCE_DIR/.dockerignore" ]; then
   copy_file "$SOURCE_DIR/.dockerignore" ".dockerignore"
   fi
