@@ -1,4 +1,4 @@
-# configurations/config.yml
+# config.yml
 
 ## AWS Regional Configuration
 aws:
@@ -56,10 +56,10 @@ iam:
 
 ## HTTPS Configuration
 https:
-  domain_mode: "custom"  # Options: "subdomain" (default), "root", "custom"
+  domain_mode: "subdomain"  # Options: "subdomain" (default), "root", "custom"
   # Only used when domain_mode is "custom"
   include_root: false  # Whether to deploy to the root domain when in custom mode
-  custom_subdomains: ["lazy-beanstalk","otro-beanstalk","another-beanstalk"]  # List of subdomains when in custom mode
+  custom_subdomains: []  # List of subdomains when in custom mode
   # Example: ["api", "admin"] would result in "api.example.com", "admin.example.com"
   ttl: 300  # Time-to-live in seconds for DNS records
 
@@ -80,24 +80,3 @@ oidc:
     cookie_name: federate_id_token
     timeout: 36000
     scope: openid
-
-## EB CLI Configuration
-elasticbeanstalk_cli:
-  branch-defaults:
-    main:
-      environment: ${PROJECT_NAME}-env
-      group_suffix: null
-  global:
-    application_name: ${PROJECT_NAME}
-    branch: null
-    default_ec2_keyname: null
-    default_platform: ${EB_CLI_PLATFORM}
-    default_region: ${AWS_REGION}
-    include_git_submodules: true
-    instance_profile: null
-    platform_name: null
-    platform_version: null
-    profile: null
-    repository: null
-    sc: git
-    workspace_type: Application

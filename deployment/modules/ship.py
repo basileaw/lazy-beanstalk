@@ -275,49 +275,29 @@ def create_eb_cli_config(config: Dict[str, Any]) -> None:
     solution_stack = config["aws"]["platform"]
     ConfigurationManager.save_solution_stack(solution_stack)
 
-    # Check if elasticbeanstalk_cli section exists
-    if "elasticbeanstalk_cli" not in config:
-        logger.info(
-            "No elasticbeanstalk_cli section found in config.yml, generating default"
-        )
-        # Use the old method to generate the config
-        eb_config = {
-            "branch-defaults": {
-                "main": {
-                    "environment": config["application"]["environment"],
-                    "group_suffix": None,
-                }
-            },
-            "global": {
-                "application_name": config["application"]["name"],
-                "branch": None,
-                "default_ec2_keyname": None,
-                "default_platform": get_eb_cli_platform_name(solution_stack),
-                "default_region": config["aws"]["region"],
-                "include_git_submodules": True,
-                "instance_profile": None,
-                "platform_name": None,
-                "platform_version": None,
-                "profile": None,
-                "repository": None,
-                "sc": "git",
-                "workspace_type": "Application",
-            },
-        }
-    else:
-        # Use the elasticbeanstalk_cli section from the config
-        eb_config = config["elasticbeanstalk_cli"]
-
-        # Check if EB_CLI_PLATFORM placeholder exists and replace it
-        if "global" in eb_config and "default_platform" in eb_config["global"]:
-            platform_value = eb_config["global"]["default_platform"]
-            if (
-                isinstance(platform_value, str)
-                and "${EB_CLI_PLATFORM}" in platform_value
-            ):
-                eb_config["global"]["default_platform"] = get_eb_cli_platform_name(
-                    solution_stack
-                )
+    eb_config = {
+        "branch-defaults": {
+            "main": {
+                "environment": config["application"]["environment"],
+                "group_suffix": None,
+            }
+        },
+        "global": {
+            "application_name": config["application"]["name"],
+            "branch": None,
+            "default_ec2_keyname": None,
+            "default_platform": get_eb_cli_platform_name(solution_stack),
+            "default_region": config["aws"]["region"],
+            "include_git_submodules": True,
+            "instance_profile": None,
+            "platform_name": None,
+            "platform_version": None,
+            "profile": None,
+            "repository": None,
+            "sc": "git",
+            "workspace_type": "Application",
+        },
+    }
 
     # Write the config file
     config_path = eb_dir / "config.yml"
