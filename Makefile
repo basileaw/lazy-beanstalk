@@ -1,4 +1,4 @@
-.PHONY: serve serve-container ship secure scrap
+.PHONY: serve spin ship secure shield scrap
 
 # Include environment variables
 ifneq (,$(wildcard .env))
@@ -27,18 +27,14 @@ else \
 fi
 endef
 
-# Run application server
+# TASKS 
+
 serve:
 	$(call task,python app/main.py)
 
 spin:
-	@printf "Make => $(BLUE)Running in container$(RESET)\n"
-	@sh -c 'DIR=$${PWD##*/} && \
-	docker rm -f $$DIR-web 2>/dev/null || true && \
-	docker buildx build --force-rm=true --no-cache -t $$DIR-web . && \
-	docker run --rm --name $$DIR-web -p 8000:8000 -v ~/.aws:/root/.aws:ro $$DIR-web'
+	$(call task,docker-compose up --build)
 
-# Deployment tasks
 ship:
 	$(call task,python deployment/manage.py ship)
 
