@@ -328,8 +328,8 @@ main() {
   if [ -f "$SOURCE_DIR/.ebignore" ]; then
     copy_file "$SOURCE_DIR/.ebignore" ".ebignore"
   fi
-  if [ -f "$SOURCE_DIR/lazy-beanstalk.config.yml" ]; then
-    copy_file "$SOURCE_DIR/lazy-beanstalk.config.yml" "lazy-beanstalk.config.yml"
+  if [ -f "$SOURCE_DIR/lazy-beanstalk.yml" ]; then
+    copy_file "$SOURCE_DIR/lazy-beanstalk.yml" "lazy-beanstalk.yml"
   fi
   if [ -f "$SOURCE_DIR/Dockerfile" ]; then
     copy_file "$SOURCE_DIR/Dockerfile" "Dockerfile"

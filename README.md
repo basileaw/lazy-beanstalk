@@ -59,9 +59,9 @@ Removes all AWS resources created by Lazy Beanstalk. The command terminates your
 
 Lazy Beanstalk allows for batteries-included deployment, but there are a few ways to customize at your discretion. 
 
-### lazy-beanstalk.config.yml
+### lazy-beanstalk.yml
 
-The `lazy-beanstalk.config.yml` file controls all deployment settings. Key variables are automatically filled in:
+The `lazy-beanstalk.yml` file controls all deployment settings. Key variables are automatically filled in:
 
 - `${PROJECT_NAME}`: Your project directory name
 - `${AWS_REGION}`: Your AWS region
