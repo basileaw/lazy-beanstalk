@@ -56,9 +56,11 @@ iam:
 
 ## HTTPS Configuration
 https:
-  domain_mode: "subdomain"  # Options: "subdomain" (default), "root", "custom"
+  domain_mode: "custom"  # Options: "subdomain" (default), "root", "custom"
   # Only used when domain_mode is "custom"
-  custom_subdomain: ""  # Example: "api" would result in "api.example.com"
+  include_root: false  # Whether to deploy to the root domain when in custom mode
+  custom_subdomains: ["lazy-beanstalk","otro-beanstalk","another-beanstalk"]  # List of subdomains when in custom mode
+  # Example: ["api", "admin"] would result in "api.example.com", "admin.example.com"
   ttl: 300  # Time-to-live in seconds for DNS records
 
 ## OIDC Configuration

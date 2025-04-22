@@ -3,11 +3,11 @@
 """
 Secure your Elastic Beanstalk environment via HTTPS using ACM and Route 53.
 Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
-Supports subdomains, root domains, and custom subdomains.
+Supports subdomains, root domains, and multiple custom subdomains.
 """
 
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 
 from . import support
 from .support import DeploymentError
@@ -56,45 +56,119 @@ def pick_certificate(acm_client=None) -> str:
         print("Invalid selection. Try again.")
 
 
-def get_domain_from_certificate(cert_domain: str, config: Dict) -> str:
+def is_domain_covered_by_certificate(domain: str, cert: Dict) -> bool:
     """
-    Determine the domain to use based on certificate domain and configuration.
+    Check if a domain is covered by a certificate.
 
     Args:
-        cert_domain: Domain name from the certificate
+        domain: Domain to check
+        cert: Certificate dictionary from describe_certificate
+
+    Returns:
+        bool: True if the domain is covered by the certificate
+    """
+    domain = domain.lower()
+
+    # Exact match for domain name
+    if cert["DomainName"].lower() == domain:
+        return True
+
+    # Check subject alternative names (which include the primary domain and wildcards)
+    for name in cert.get("SubjectAlternativeNames", []):
+        name = name.lower()
+
+        # Exact match
+        if name == domain:
+            return True
+
+        # Wildcard match
+        if name.startswith("*."):
+            # Wildcard only covers one level of subdomain
+            wildcard_domain = name[2:]  # Remove '*.'
+            domain_parts = domain.split(".")
+
+            # Check if it's a first-level subdomain of the wildcard domain
+            if len(domain_parts) == len(
+                wildcard_domain.split(".")
+            ) + 1 and domain.endswith(wildcard_domain):
+                return True
+
+    return False
+
+
+def get_domains_from_certificate_config(cert_domain: str, config: Dict) -> List[str]:
+    """
+    Determine which domains to use based on certificate domain and configuration.
+
+    Args:
+        cert_domain: Primary domain name from the certificate
         config: Configuration dictionary
 
     Returns:
-        Domain name to use for HTTPS
+        List of domain names to use for HTTPS
     """
     project_name = ConfigurationManager.get_project_name()
     https_config = config.get("https", {})
     domain_mode = https_config.get("domain_mode", "subdomain")
+    domains = []
+
+    root_domain = cert_domain.replace("*.", "")
 
     if domain_mode == "root":
-        # Remove wildcard and use root domain
-        return cert_domain.replace("*.", "")
+        # Root domain mode - just return the root domain
+        domains.append(root_domain)
+    elif domain_mode == "subdomain":
+        # Subdomain mode - use project name as subdomain
+        domains.append(cert_domain.replace("*", project_name))
     elif domain_mode == "custom":
-        # Use custom subdomain if provided
-        custom_subdomain = https_config.get("custom_subdomain", "")
-        if custom_subdomain:
-            if "*." in cert_domain:
-                return f"{custom_subdomain}.{cert_domain.replace('*.', '')}"
-            else:
-                logger.warning(
-                    f"Certificate domain '{cert_domain}' doesn't have a wildcard. "
-                    f"Custom subdomain '{custom_subdomain}' may not be covered by this certificate."
-                )
-                return f"{custom_subdomain}.{cert_domain}"
+        # Custom subdomains mode
+        include_root = https_config.get("include_root", False)
+        custom_subdomains = https_config.get("custom_subdomains", [])
+
+        # Add root domain if needed
+        if include_root:
+            domains.append(root_domain)
+
+        # Add custom subdomains
+        for subdomain in custom_subdomains:
+            if subdomain:  # Skip empty subdomain names
+                domains.append(f"{subdomain}.{root_domain}")
+
+    return domains
+
+
+def validate_domains_with_certificate(
+    domains: List[str], cert: Dict
+) -> List[Tuple[str, bool, str]]:
+    """
+    Validate each domain against the certificate.
+
+    Args:
+        domains: List of domain names to validate
+        cert: Certificate dictionary from describe_certificate
+
+    Returns:
+        List of tuples (domain, is_valid, message)
+    """
+    results = []
+
+    for domain in domains:
+        is_covered = is_domain_covered_by_certificate(domain, cert)
+
+        if is_covered:
+            results.append((domain, True, "Domain is covered by certificate"))
         else:
-            logger.warning(
-                "Custom domain mode selected but no custom_subdomain provided. "
-                "Falling back to subdomain mode."
-            )
-            return cert_domain.replace("*", project_name)
-    else:  # subdomain (default)
-        # Replace wildcard with project name (original behavior)
-        return cert_domain.replace("*", project_name)
+            # Determine if it's a root domain or subdomain
+            if "." in domain and len(domain.split(".")) > 2:
+                # It's a subdomain
+                message = f"Subdomain '{domain}' is not covered by certificate. Certificate may not include wildcard."
+            else:
+                # It's a root domain
+                message = f"Root domain '{domain}' is not covered by certificate. Certificate may not include this domain."
+
+            results.append((domain, False, message))
+
+    return results
 
 
 @support.aws_handler
@@ -326,9 +400,31 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     cert = acm_client.describe_certificate(CertificateArn=cert_arn)["Certificate"]
     cert_domain = cert["DomainName"]
 
-    # Determine the domain to use based on configuration
-    domain = get_domain_from_certificate(cert_domain, config)
-    logger.info(f"Using domain: {domain}")
+    # Determine domains to use based on configuration
+    domains = get_domains_from_certificate_config(cert_domain, config)
+    if not domains:
+        raise DeploymentError("No domains configured for HTTPS")
+
+    # Validate domains against certificate
+    validation_results = validate_domains_with_certificate(domains, cert)
+
+    # Check for any invalid domains
+    invalid_domains = [
+        (domain, msg) for domain, is_valid, msg in validation_results if not is_valid
+    ]
+    if invalid_domains:
+        error_msgs = []
+        for domain, msg in invalid_domains:
+            error_msgs.append(f"- {domain}: {msg}")
+
+        raise DeploymentError(
+            f"Certificate validation failed for the following domains:\n"
+            f"{chr(10).join(error_msgs)}\n"
+            f"Certificate covers: {cert_domain} and {', '.join(cert.get('SubjectAlternativeNames', []))}"
+        )
+
+    # Domains are valid, proceed with setup
+    logger.info(f"Setting up HTTPS for domains: {', '.join(domains)}")
 
     # Find load balancer
     logger.info("Locating environment load balancer")
@@ -346,13 +442,21 @@ def enable_https(config: Dict, cert_arn: str) -> None:
     ensure_security_group_https(lb_arn)
     support.setup_https_listener(lb_arn, cert_arn, project_name)
 
-    # Set up DNS
-    logger.info("Configuring DNS")
-    zone_id = get_hosted_zone_id(domain)
-    resp = create_dns_record(zone_id, domain, lb["DNSName"], config)
-    wait_for_dns_sync(resp["ChangeInfo"]["Id"])
+    # Get hosted zone for the domain(s)
+    # We use the root domain to find the hosted zone
+    root_domain = cert_domain.replace("*.", "")
+    zone_id = get_hosted_zone_id(root_domain)
 
+    # Set up DNS records for each domain
+    for domain in domains:
+        logger.info(f"Configuring DNS for {domain}")
+        resp = create_dns_record(zone_id, domain, lb["DNSName"], config)
+        wait_for_dns_sync(resp["ChangeInfo"]["Id"])
+        logger.info(f"DNS configuration complete for {domain}")
+
+    # Log completion message with all domains
+    domains_list = ", ".join([f"https://{d}" for d in domains])
     logger.info(f"HTTPS configuration complete!")
     logger.info(
-        f"Your application is now available at: https://{domain} (Note: DNS propagation may take up to 48 hours to complete globally)"
+        f"Your application is now available at: {domains_list} (Note: DNS propagation may take up to 48 hours to complete globally)"
     )
