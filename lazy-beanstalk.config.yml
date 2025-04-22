@@ -1,4 +1,4 @@
-# config.yml
+# lazy-beanstalk.config.yml
 
 ## AWS Regional Configuration
 aws:

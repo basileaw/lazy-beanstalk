@@ -94,7 +94,7 @@ class ClientManager:
 class ConfigurationManager:
     """
     Manages and caches application configuration.
-    Prioritizes .elasticbeanstalk/config.yml when available.
+    Prioritizes .elasticbeanstalk/lazy-beanstalk.config.yml when available.
     """
 
     _config = None
@@ -128,8 +128,8 @@ class ConfigurationManager:
 
     @classmethod
     def get_config_path(cls) -> Path:
-        """Return the path to the config.yml file."""
-        return cls.get_project_root() / "config.yml"
+        """Return the path to the Lazy Beanstalk config file."""
+        return cls.get_project_root() / "lazy-beanstalk.config.yml"
 
     @classmethod
     def get_policies_dir(cls) -> Path:
