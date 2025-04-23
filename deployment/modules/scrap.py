@@ -224,6 +224,40 @@ def cleanup_https(env_name: str, project_name: str) -> None:
             logger.info("Removed HTTPS listener")
         else:
             logger.info("not found")
+
+        # Reset HTTP listener's redirection (new code)
+        logger.info("Checking for HTTP listener with redirection")
+        http_listener = next((l for l in listeners if l["Port"] == 80), None)
+        if http_listener:
+            # Check if the listener has a redirect action to HTTPS
+            default_actions = http_listener.get("DefaultActions", [])
+            is_https_redirect = any(
+                action.get("Type") == "redirect"
+                and action.get("RedirectConfig", {}).get("Protocol") == "HTTPS"
+                for action in default_actions
+            )
+
+            if is_https_redirect:
+                # Find target group to use for forward action
+                target_groups = elbv2_client.describe_target_groups(
+                    LoadBalancerArn=lb_arn
+                )["TargetGroups"]
+                if target_groups:
+                    logger.info("Resetting HTTP listener to forward traffic")
+                    target_group_arn = target_groups[0]["TargetGroupArn"]
+                    elbv2_client.modify_listener(
+                        ListenerArn=http_listener["ListenerArn"],
+                        DefaultActions=[
+                            {"Type": "forward", "TargetGroupArn": target_group_arn}
+                        ],
+                    )
+                    logger.info("Reset HTTP listener to default forward action")
+                else:
+                    logger.info("No target groups found to reset HTTP listener")
+            else:
+                logger.info("HTTP listener does not have HTTPS redirection")
+        else:
+            logger.info("HTTP listener not found")
     except ClientError as e:
         if e.response["Error"]["Code"] not in [
             "LoadBalancerNotFound",

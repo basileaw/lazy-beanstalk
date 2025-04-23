@@ -518,6 +518,50 @@ def preserve_https_config(lb_arn: str, project_name: str) -> Optional[Dict[str, 
 
 
 @aws_handler
+def configure_http_to_https_redirection(lb_arn: str) -> None:
+    """
+    Configure HTTP to HTTPS redirection on the load balancer.
+    Creates or modifies the HTTP listener (port 80) to redirect all traffic to HTTPS (port 443).
+    """
+    elbv2_client = ClientManager.get_client("elbv2")
+
+    logger.info("Configuring HTTP to HTTPS redirection")
+
+    # Check if HTTP listener exists
+    listeners = elbv2_client.describe_listeners(LoadBalancerArn=lb_arn)["Listeners"]
+    http_listener = next((l for l in listeners if l["Port"] == 80), None)
+
+    # Configure redirect action
+    redirect_action = {
+        "Type": "redirect",
+        "RedirectConfig": {
+            "Protocol": "HTTPS",
+            "Port": "443",
+            "StatusCode": "HTTP_301",  # Permanent redirect
+            "Host": "#{host}",
+            "Path": "/#{path}",
+            "Query": "#{query}",
+        },
+    }
+
+    if http_listener:
+        logger.info("Modifying existing HTTP listener to redirect to HTTPS")
+        elbv2_client.modify_listener(
+            ListenerArn=http_listener["ListenerArn"], DefaultActions=[redirect_action]
+        )
+    else:
+        logger.info("Creating new HTTP listener with redirection to HTTPS")
+        elbv2_client.create_listener(
+            LoadBalancerArn=lb_arn,
+            Protocol="HTTP",
+            Port=80,
+            DefaultActions=[redirect_action],
+        )
+
+    logger.info("HTTP to HTTPS redirection configured successfully")
+
+
+@aws_handler
 def setup_https_listener(
     lb_arn: str,
     cert_arn: str,
@@ -571,6 +615,9 @@ def setup_https_listener(
             {"Key": f"{prefix}:certificate-arn", "Value": cert_arn},
         ],
     )
+
+    # Configure HTTP to HTTPS redirection
+    configure_http_to_https_redirection(lb_arn)
 
 
 @aws_handler
