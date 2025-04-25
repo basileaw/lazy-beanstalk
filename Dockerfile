@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Copy dependency files first (for better layer caching)
-COPY pyproject.toml poetry.lock* requirements.txt* Pipfile* Pipfile.lock* pdm.lock* .pdm.toml* environment.yml* conda-lock.yml* hatch.toml* ./
+COPY pyproject.toml* poetry.lock* requirements.txt* Pipfile* Pipfile.lock* pdm.lock* .pdm.toml* environment.yml* conda-lock.yml* hatch.toml* ./
 
 # Copy application code
 COPY app/ ./
