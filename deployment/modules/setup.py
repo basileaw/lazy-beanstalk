@@ -12,8 +12,9 @@ import boto3
 import json
 import logging
 import time
+import fnmatch
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 
 # Set up standardized logging with UTC time
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
@@ -91,6 +92,205 @@ class ClientManager:
         return {service: cls.get_client(service) for service in services}
 
 
+class EnvironmentManager:
+    """Manages environment variables for both deployment and application."""
+
+    @classmethod
+    def load_env_file(cls, file_path: Path) -> Dict[str, str]:
+        """
+        Load environment variables from a .env file.
+
+        Args:
+            file_path: Path to the .env file
+
+        Returns:
+            Dictionary of environment variables
+        """
+        env_vars = {}
+
+        if not file_path.exists():
+            logger.debug(f"Environment file not found: {file_path}")
+            return env_vars
+
+        try:
+            with open(file_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        env_vars[key.strip()] = value.strip()
+
+            logger.debug(f"Loaded {len(env_vars)} variables from {file_path}")
+            return env_vars
+        except Exception as e:
+            logger.warning(f"Error loading environment file {file_path}: {e}")
+            return env_vars
+
+    @classmethod
+    def filter_env_vars(
+        cls, env_vars: Dict[str, str], exclude_patterns: List[str]
+    ) -> Dict[str, str]:
+        """
+        Filter environment variables based on exclusion patterns.
+
+        Args:
+            env_vars: Dictionary of environment variables
+            exclude_patterns: List of glob patterns to exclude
+
+        Returns:
+            Filtered dictionary of environment variables
+        """
+        if not exclude_patterns:
+            return env_vars
+
+        filtered_vars = {}
+
+        for key, value in env_vars.items():
+            excluded = False
+            for pattern in exclude_patterns:
+                if fnmatch.fnmatch(key, pattern):
+                    excluded = True
+                    break
+
+            if not excluded:
+                filtered_vars[key] = value
+
+        logger.debug(
+            f"Filtered environment variables: {len(env_vars)} -> {len(filtered_vars)}"
+        )
+        return filtered_vars
+
+    @classmethod
+    def get_application_env_vars(cls, config: Dict) -> Dict[str, str]:
+        """
+        Get application environment variables based on configuration.
+
+        Args:
+            config: Configuration dictionary
+
+        Returns:
+            Dictionary of application environment variables
+        """
+        env_section = config.get("environment", {})
+
+        # If environment section is not enabled, return empty dict
+        if not env_section.get("enabled", False):
+            return {}
+
+        sources = env_section.get("sources", [])
+        exclude_patterns = env_section.get("exclude_patterns", ["LB_*"])
+        all_vars = {}
+
+        for source in sources:
+            if "file" in source:
+                file_path = ConfigurationManager.get_project_root() / source["file"]
+                file_vars = cls.load_env_file(file_path)
+                all_vars.update(file_vars)
+
+        # Filter variables based on exclude patterns
+        return cls.filter_env_vars(all_vars, exclude_patterns)
+
+    @classmethod
+    def get_old_to_new_env_mapping(cls) -> Dict[str, str]:
+        """
+        Get mapping from old environment variable names to new prefixed names.
+
+        Returns:
+            Dictionary mapping old names to new names with LB_ prefix
+        """
+        return {
+            "OIDC_CLIENT_ID": "LB_OIDC_CLIENT_ID",
+            "OIDC_CLIENT_SECRET": "LB_OIDC_CLIENT_SECRET",
+            "OIDC_ISSUER": "LB_OIDC_ISSUER",
+            "OIDC_AUTH_ENDPOINT": "LB_OIDC_AUTH_ENDPOINT",
+            "OIDC_TOKEN_ENDPOINT": "LB_OIDC_TOKEN_ENDPOINT",
+            "OIDC_USERINFO_ENDPOINT": "LB_OIDC_USERINFO_ENDPOINT",
+        }
+
+    @classmethod
+    def migrate_env_variables(cls, env_file_path: Path) -> bool:
+        """
+        Migrate old environment variable names to new prefixed format.
+
+        Args:
+            env_file_path: Path to the .env file
+
+        Returns:
+            True if migration occurred, False otherwise
+        """
+        if not env_file_path.exists():
+            return False
+
+        env_vars = cls.load_env_file(env_file_path)
+        mapping = cls.get_old_to_new_env_mapping()
+
+        # Check if any old variable names are present
+        old_vars_present = any(old_name in env_vars for old_name in mapping.keys())
+
+        if not old_vars_present:
+            return False
+
+        # Create updated content
+        lines = []
+        updated = set()
+
+        with open(env_file_path, "r") as f:
+            for line in f:
+                original_line = line
+                line = line.strip()
+
+                if not line or line.startswith("#"):
+                    lines.append(original_line)
+                    continue
+
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+
+                    if key in mapping:
+                        new_key = mapping[key]
+                        lines.append(f"{new_key}={value.strip()}\n")
+                        updated.add(key)
+                    else:
+                        lines.append(original_line)
+                else:
+                    lines.append(original_line)
+
+        # Add warning comment at the top if we made changes
+        if updated:
+            header = [
+                "# WARNING: Environment variable names have been updated with LB_ prefix\n",
+                "# The following variables were renamed:\n",
+            ]
+
+            for old_name in updated:
+                header.append(f"# {old_name} -> {mapping[old_name]}\n")
+
+            header.append("#\n")
+            lines = header + lines
+
+            # Write updated content
+            with open(env_file_path, "w") as f:
+                f.writelines(lines)
+
+            logger.info(
+                f"Migrated {len(updated)} environment variables to use LB_ prefix"
+            )
+
+            # Update os.environ with new values
+            for old_name in updated:
+                new_name = mapping[old_name]
+                if old_name in os.environ:
+                    os.environ[new_name] = os.environ[old_name]
+
+            return True
+
+        return False
+
+
 class ConfigurationManager:
     """
     Manages and caches application configuration.
@@ -130,6 +330,11 @@ class ConfigurationManager:
     def get_config_path(cls) -> Path:
         """Return the path to the Lazy Beanstalk config file."""
         return cls.get_project_root() / "lazy-beanstalk.yml"
+
+    @classmethod
+    def get_env_file_path(cls) -> Path:
+        """Return the path to the .env file."""
+        return cls.get_project_root() / ".env"
 
     @classmethod
     def get_policies_dir(cls) -> Path:
@@ -566,6 +771,10 @@ class ConfigurationManager:
             # Add EB_CLI_PLATFORM for backwards compatibility
             eb_cli_platform = get_eb_cli_platform_name(docker_platform)
             replacements["EB_CLI_PLATFORM"] = eb_cli_platform
+
+            # Check and migrate environment variables if needed
+            env_file_path = cls.get_env_file_path()
+            EnvironmentManager.migrate_env_variables(env_file_path)
 
             # Replace placeholders
             config = cls.replace_placeholders(config, replacements)

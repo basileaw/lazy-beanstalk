@@ -12,7 +12,7 @@ import fnmatch
 import tempfile
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from botocore.exceptions import ClientError
 
 from . import support
@@ -21,6 +21,7 @@ from .setup import (
     ClientManager,
     logger,
     get_eb_cli_platform_name,
+    EnvironmentManager,
 )
 
 
@@ -212,6 +213,30 @@ def restore_env_state(state: Dict[str, Any], project_name: str) -> None:
         )
 
 
+def format_env_vars_for_eb(env_vars: Dict[str, str]) -> List[Dict[str, str]]:
+    """
+    Format environment variables for Elastic Beanstalk option settings format.
+
+    Args:
+        env_vars: Dictionary of environment variables
+
+    Returns:
+        List of formatted option settings
+    """
+    settings = []
+
+    for key, value in env_vars.items():
+        settings.append(
+            {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": key,
+                "Value": str(value),
+            }
+        )
+
+    return settings
+
+
 def create_or_update_env(config: Dict[str, Any], version: str) -> None:
     """Create or update Elastic Beanstalk environment."""
     eb_client = ClientManager.get_client("elasticbeanstalk")
@@ -224,7 +249,16 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
     )["Environments"]
     env_exists = bool(envs)
 
+    # Get basic settings
     settings = support.get_env_settings(config)
+
+    # Get application environment variables if enabled
+    env_vars = EnvironmentManager.get_application_env_vars(config)
+    if env_vars:
+        logger.info(f"Found {len(env_vars)} application environment variables")
+        env_var_settings = format_env_vars_for_eb(env_vars)
+        settings.extend(env_var_settings)
+
     state = None
 
     if env_exists:

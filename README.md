@@ -67,6 +67,25 @@ The `lazy-beanstalk.yml` file controls all deployment settings. Key variables ar
 - `${AWS_REGION}`: Your AWS region
 - `${LATEST_DOCKER_PLATFORM}`: The latest Elastic Beanstalk Docker platform
 
+### Environment Variables
+
+Lazy Beanstalk uses a single `.env` file for both deployment configuration and application variables:
+
+- Variables starting with `LB_` are used for deployment operations and are not passed to your application
+- All other variables are passed to your Elastic Beanstalk environment during deployment
+
+For example:
+```
+# Deployment variables
+LB_OIDC_CLIENT_ID=your-oidc-client-id
+
+# Application variables
+DATABASE_URL=postgres://user:pass@host:port/db
+API_KEY=your-api-key
+```
+
+During installation, a `.env.sample` file is created with documentation and examples.
+
 ### IAM
 
 Lazy Beanstalk automatically creates and manages IAM roles for your application. Custom policies can be added to the `deployment/policies` directory as JSON files.
@@ -75,12 +94,12 @@ Lazy Beanstalk automatically creates and manages IAM roles for your application.
 
 To use OIDC authentication (with the `shield` command), you'll need to set these environment variables or be ready to enter them when prompted:
 
-- `OIDC_CLIENT_ID`: Your OIDC client ID
-- `OIDC_CLIENT_SECRET`: Your OIDC client secret
-- `OIDC_ISSUER`: Your OIDC provider issuer URL
-- `OIDC_AUTH_ENDPOINT`: Authorization endpoint URL
-- `OIDC_TOKEN_ENDPOINT`: Token endpoint URL
-- `OIDC_USERINFO_ENDPOINT`: User info endpoint URL
+- `LB_OIDC_CLIENT_ID`: Your OIDC client ID
+- `LB_OIDC_CLIENT_SECRET`: Your OIDC client secret
+- `LB_OIDC_ISSUER`: Your OIDC provider issuer URL
+- `LB_OIDC_AUTH_ENDPOINT`: Authorization endpoint URL
+- `LB_OIDC_TOKEN_ENDPOINT`: Token endpoint URL
+- `LB_OIDC_USERINFO_ENDPOINT`: User info endpoint URL
 
 These can be stored in a `.env` file (which is automatically added to `.gitignore`).
 

@@ -294,6 +294,67 @@ create_init_files() {
   touch deployment/modules/__init__.py
 }
 
+# Create a sample .env file with environment variable documentation
+create_env_sample() {
+  echo "Creating sample .env file with documentation..."
+  if [ ! -f ".env" ]; then
+    cat > ".env.sample" << EOF
+# Lazy Beanstalk Environment Variables
+#
+# This file contains environment variable documentation for your application.
+# Copy this file to .env and fill in your values.
+# IMPORTANT: Make sure .env is in your .gitignore file!
+
+# ==== LAZY BEANSTALK DEPLOYMENT VARIABLES ====
+# Variables starting with LB_ are used by Lazy Beanstalk for deployment
+# and won't be passed to your application environment
+
+# OIDC Authentication (for 'make shield' command)
+# LB_OIDC_CLIENT_ID=your-client-id
+# LB_OIDC_CLIENT_SECRET=your-client-secret
+# LB_OIDC_ISSUER=https://your-identity-provider
+# LB_OIDC_AUTH_ENDPOINT=https://your-identity-provider/auth
+# LB_OIDC_TOKEN_ENDPOINT=https://your-identity-provider/token
+# LB_OIDC_USERINFO_ENDPOINT=https://your-identity-provider/userinfo
+
+# ==== APPLICATION VARIABLES ====
+# Variables without the LB_ prefix will be passed to your application
+
+# Database configuration
+# DATABASE_URL=postgres://user:password@host:port/dbname
+
+# API credentials
+# API_KEY=your-api-key
+# API_SECRET=your-api-secret
+
+# Service endpoints
+# SERVICE_ENDPOINT=https://api.example.com
+EOF
+    echo "Created .env.sample with documentation"
+  else
+    echo ".env file already exists, skipping sample creation"
+  fi
+}
+
+# Ensure .env is in .gitignore
+ensure_env_in_gitignore() {
+  echo "Checking .gitignore configuration..."
+  if [ -f ".gitignore" ]; then
+    if ! grep -q "^\.env$" .gitignore; then
+      echo "Adding .env to .gitignore"
+      echo "" >> .gitignore
+      echo "# Environment variables" >> .gitignore
+      echo ".env" >> .gitignore
+    else
+      echo ".env already in .gitignore"
+    fi
+  else
+    echo "Creating .gitignore with .env entry"
+    echo "# Environment variables" > .gitignore
+    echo ".env" >> .gitignore
+  fi
+}
+
 # Main installation process
 main() {
   # For production use GitHub, for local testing use LOCAL_SRC
@@ -399,7 +460,22 @@ main() {
   # Create __init__.py files to solve import issues
   create_init_files
   
+  # Create sample .env file and ensure .gitignore configuration
+  create_env_sample
+  ensure_env_in_gitignore
+  
   echo "Lazy Beanstalk deployment setup complete!"
+  echo ""
+  echo "IMPORTANT NOTES:"
+  echo "1. Environment variables starting with LB_ are used for deployment."
+  echo "2. All other environment variables will be passed to your application."
+  echo "3. See .env.sample for documentation and examples."
+  echo "4. Make sure to add .env to your .gitignore (this was done automatically)."
+  echo ""
+  echo "To deploy your application:"
+  echo "  make serve    # Run locally"
+  echo "  make spin     # Run in Docker"
+  echo "  make ship     # Deploy to AWS Elastic Beanstalk"
 }
 
 main "$@"

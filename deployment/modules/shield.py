@@ -11,22 +11,28 @@ from .setup import (
     ClientManager,
     logger,
     ensure_env_in_gitignore,
+    EnvironmentManager,
 )
 
 
 def prompt_for_missing_oidc_vars(config):
     """Prompt for missing OIDC variables and save them to .env file."""
+    # Define variable mapping with new prefixed names
     required_vars = [
-        ("client_id", "OIDC_CLIENT_ID", "Enter OIDC client ID"),
-        ("client_secret", "OIDC_CLIENT_SECRET", "Enter OIDC client secret"),
-        ("issuer", "OIDC_ISSUER", "Enter OIDC issuer URL"),
+        ("client_id", "LB_OIDC_CLIENT_ID", "Enter OIDC client ID"),
+        ("client_secret", "LB_OIDC_CLIENT_SECRET", "Enter OIDC client secret"),
+        ("issuer", "LB_OIDC_ISSUER", "Enter OIDC issuer URL"),
         (
             "endpoints.authorization",
-            "OIDC_AUTH_ENDPOINT",
+            "LB_OIDC_AUTH_ENDPOINT",
             "Enter authorization endpoint URL",
         ),
-        ("endpoints.token", "OIDC_TOKEN_ENDPOINT", "Enter token endpoint URL"),
-        ("endpoints.userinfo", "OIDC_USERINFO_ENDPOINT", "Enter userinfo endpoint URL"),
+        ("endpoints.token", "LB_OIDC_TOKEN_ENDPOINT", "Enter token endpoint URL"),
+        (
+            "endpoints.userinfo",
+            "LB_OIDC_USERINFO_ENDPOINT",
+            "Enter userinfo endpoint URL",
+        ),
     ]
 
     # Find which variables are missing
@@ -34,6 +40,13 @@ def prompt_for_missing_oidc_vars(config):
     for config_path, env_var, prompt_text in required_vars:
         if env_var not in os.environ or not os.environ[env_var]:
             missing.append((env_var, prompt_text))
+
+    # Check for old variable names in environment
+    var_mapping = EnvironmentManager.get_old_to_new_env_mapping()
+    for old_name, new_name in var_mapping.items():
+        if old_name in os.environ and new_name not in os.environ:
+            os.environ[new_name] = os.environ[old_name]
+            logger.debug(f"Mapped {old_name} to {new_name} in environment")
 
     if not missing:
         return True  # All variables are present
@@ -47,7 +60,7 @@ def prompt_for_missing_oidc_vars(config):
     new_vars = {}
 
     for env_var, prompt_text in missing:
-        if env_var == "OIDC_CLIENT_SECRET":
+        if env_var == "LB_OIDC_CLIENT_SECRET":
             value = getpass.getpass(f"{prompt_text}: ")
         else:
             value = click.prompt(prompt_text)
@@ -85,6 +98,18 @@ def prompt_for_missing_oidc_vars(config):
             for key, value in existing_vars.items():
                 f.write(f"{key}={value}\n")
 
+        # Add explanation about environment variables
+        with open(env_path, "a") as f:
+            f.write(
+                "\n# Note: Variables starting with LB_ are used by Lazy Beanstalk for deployment\n"
+            )
+            f.write(
+                "# Other variables will be passed to your Elastic Beanstalk environment\n"
+            )
+            f.write("# Add your application-specific variables below:\n")
+            f.write("# DATABASE_URL=postgres://user:pass@host:port/db\n")
+            f.write("# API_KEY=your-api-key\n")
+
         logger.info(f"OIDC configuration values saved to {env_path}")
 
     return True
@@ -109,14 +134,21 @@ def validate_oidc_config(config: Dict) -> bool:
     if not prompt_for_missing_oidc_vars(config):
         return False
 
+    # Check for old variables and map them if needed
+    var_mapping = EnvironmentManager.get_old_to_new_env_mapping()
+    for old_name, new_name in var_mapping.items():
+        if old_name in os.environ and new_name not in os.environ:
+            os.environ[new_name] = os.environ[old_name]
+            logger.debug(f"Mapped {old_name} to {new_name} in environment")
+
     # Final check after prompting
     required_vars = [
-        "OIDC_CLIENT_ID",
-        "OIDC_CLIENT_SECRET",
-        "OIDC_ISSUER",
-        "OIDC_AUTH_ENDPOINT",
-        "OIDC_TOKEN_ENDPOINT",
-        "OIDC_USERINFO_ENDPOINT",
+        "LB_OIDC_CLIENT_ID",
+        "LB_OIDC_CLIENT_SECRET",
+        "LB_OIDC_ISSUER",
+        "LB_OIDC_AUTH_ENDPOINT",
+        "LB_OIDC_TOKEN_ENDPOINT",
+        "LB_OIDC_USERINFO_ENDPOINT",
     ]
 
     missing = [
@@ -220,6 +252,9 @@ def get_client_secret(secret: Optional[str] = None) -> str:
     # Priority: 1. Command line arg, 2. Environment variable, 3. Interactive prompt
     if secret:
         return secret
+    if secret := os.environ.get("LB_OIDC_CLIENT_SECRET"):
+        return secret
+    # Backward compatibility - check for old environment variable
     if secret := os.environ.get("OIDC_CLIENT_SECRET"):
         return secret
     return getpass.getpass("\nPlease enter your OIDC client secret: ")
@@ -236,20 +271,20 @@ def configure_oidc_auth(config: Dict, client_secret: Optional[str] = None) -> No
     """
     env_name = config["application"]["environment"]
 
-    # Prioritize environment variables over config file values
+    # Prioritize environment variables over config file values using new prefixed names
     oidc_config = {
-        "client_id": os.environ.get("OIDC_CLIENT_ID", config["oidc"]["client_id"]),
-        "client_secret": client_secret or os.environ.get("OIDC_CLIENT_SECRET", ""),
-        "issuer": os.environ.get("OIDC_ISSUER", config["oidc"]["issuer"]),
+        "client_id": os.environ.get("LB_OIDC_CLIENT_ID", config["oidc"]["client_id"]),
+        "client_secret": client_secret or os.environ.get("LB_OIDC_CLIENT_SECRET", ""),
+        "issuer": os.environ.get("LB_OIDC_ISSUER", config["oidc"]["issuer"]),
         "endpoints": {
             "authorization": os.environ.get(
-                "OIDC_AUTH_ENDPOINT", config["oidc"]["endpoints"]["authorization"]
+                "LB_OIDC_AUTH_ENDPOINT", config["oidc"]["endpoints"]["authorization"]
             ),
             "token": os.environ.get(
-                "OIDC_TOKEN_ENDPOINT", config["oidc"]["endpoints"]["token"]
+                "LB_OIDC_TOKEN_ENDPOINT", config["oidc"]["endpoints"]["token"]
             ),
             "userinfo": os.environ.get(
-                "OIDC_USERINFO_ENDPOINT", config["oidc"]["endpoints"]["userinfo"]
+                "LB_OIDC_USERINFO_ENDPOINT", config["oidc"]["endpoints"]["userinfo"]
             ),
         },
         "session": config["oidc"]["session"],  # Non-sensitive, use config values
