@@ -33,7 +33,7 @@ serve:
 	$(call task,python app/main.py)
 
 spin:
-	$(call task,docker-compose up --build)
+	$(call task,docker compose up --build)
 
 ship:
 	$(call task,python deployment/manage.py ship)
