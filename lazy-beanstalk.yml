@@ -74,6 +74,8 @@ https:
   custom_subdomains: []  # List of subdomains when in custom mode
   # Example: ["api", "admin"] would result in "api.example.com", "admin.example.com"
   ttl: 300  # Time-to-live in seconds for DNS records
+  # Note: Set LB_CERTIFICATE_ARN in .env to specify the certificate ARN
+  # and avoid interactive prompts when multiple certificates exist
 
 ## OIDC Configuration
 ### Required environment variables: LB_OIDC_CLIENT_ID, LB_OIDC_CLIENT_SECRET, LB_OIDC_ISSUER,

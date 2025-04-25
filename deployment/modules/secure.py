@@ -6,6 +6,7 @@ Prompts for a certificate if multiple are ISSUED, otherwise auto-selects.
 Supports subdomains, root domains, and multiple custom subdomains.
 """
 
+import os
 import time
 from typing import Dict, Optional, Tuple, List
 
@@ -18,6 +19,9 @@ from .setup import ConfigurationManager, ClientManager, logger
 def pick_certificate(acm_client=None) -> str:
     """
     Choose or auto-select an ISSUED ACM certificate.
+    First checks LB_CERTIFICATE_ARN environment variable,
+    then falls back to interactive selection if multiple certificates exist.
+
     Returns the ARN of the chosen certificate.
     """
     if acm_client is None:
@@ -31,13 +35,35 @@ def pick_certificate(acm_client=None) -> str:
     if not certs:
         raise DeploymentError("No ISSUED certificates found in ACM.")
 
+    # Check for environment variable with certificate ARN
+    cert_arn = os.environ.get("LB_CERTIFICATE_ARN")
+    if cert_arn:
+        # Verify the ARN exists in the list of available certificates
+        matching_cert = next(
+            (c for c in certs if c["CertificateArn"] == cert_arn), None
+        )
+        if matching_cert:
+            logger.info(
+                f"Using certificate from LB_CERTIFICATE_ARN: {matching_cert['DomainName']} ({matching_cert['CertificateArn']})"
+            )
+            return matching_cert["CertificateArn"]
+        else:
+            logger.warning(
+                f"Certificate ARN in LB_CERTIFICATE_ARN not found: {cert_arn}"
+            )
+            logger.warning("Available certificates will be shown for selection")
+
+    # If only one certificate, use it automatically
     if len(certs) == 1:
         cert = certs[0]
         logger.info(
             f"Using certificate: {cert['DomainName']} ({cert['CertificateArn']})"
         )
         return cert["CertificateArn"]
+
+    # Fall back to interactive selection
     print("\nMultiple ISSUED certificates found. Choose one:")
+    print("(You can avoid this prompt by setting LB_CERTIFICATE_ARN in your .env file)")
 
     for i, cert in enumerate(certs, 1):
         print(f"{i}) {cert.get('DomainName', '?')} ({cert['CertificateArn']})")
@@ -49,6 +75,10 @@ def pick_certificate(acm_client=None) -> str:
                 chosen = certs[choice - 1]
                 logger.info(
                     f"Selected certificate: {chosen['DomainName']} ({chosen['CertificateArn']})"
+                )
+                # Suggest adding to .env file
+                print(
+                    f"\nTip: Add LB_CERTIFICATE_ARN={chosen['CertificateArn']} to your .env file to skip this prompt next time."
                 )
                 return chosen["CertificateArn"]
         except ValueError:

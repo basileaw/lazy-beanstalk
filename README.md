@@ -90,6 +90,14 @@ During installation, a `.env.sample` file is created with documentation and exam
 
 Lazy Beanstalk automatically creates and manages IAM roles for your application. Custom policies can be added to the `deployment/policies` directory as JSON files.
 
+### HTTPS Configuration (Certificates)
+
+When using the `make secure` command, Lazy Beanstalk will prompt you to select a certificate 
+if multiple are available in AWS Certificate Manager. You can avoid this prompt by setting:
+
+- `LB_CERTIFICATE_NUMBER=n` where 'n' is the certificate number from the displayed list
+- `LB_CERTIFICATE_ARN=arn:aws:acm:...` to directly specify the certificate ARN
+
 ### OIDC Authentication
 
 To use OIDC authentication (with the `shield` command), you'll need to set these environment variables or be ready to enter them when prompted:

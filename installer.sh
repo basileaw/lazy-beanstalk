@@ -309,6 +309,9 @@ create_env_sample() {
 # Variables starting with LB_ are used by Lazy Beanstalk for deployment
 # and won't be passed to your application environment
 
+# HTTPS Certificate Selection (for 'make secure' command)
+# LB_CERTIFICATE_ARN=arn:aws:acm:region:account:certificate/certificate-id
+
 # OIDC Authentication (for 'make shield' command)
 # LB_OIDC_CLIENT_ID=your-client-id
 # LB_OIDC_CLIENT_SECRET=your-client-secret
