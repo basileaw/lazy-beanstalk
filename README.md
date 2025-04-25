@@ -100,7 +100,7 @@ if multiple are available in AWS Certificate Manager. You can avoid this prompt 
 
 ### OIDC Authentication
 
-To use OIDC authentication (with the `shield` command), you'll need to set these environment variables or be ready to enter them when prompted:
+To use OIDC authentication (with the `shield` command), you must set these environment variables in your `.env` file before running the command:
 
 - `LB_OIDC_CLIENT_ID`: Your OIDC client ID
 - `LB_OIDC_CLIENT_SECRET`: Your OIDC client secret
@@ -109,7 +109,7 @@ To use OIDC authentication (with the `shield` command), you'll need to set these
 - `LB_OIDC_TOKEN_ENDPOINT`: Token endpoint URL
 - `LB_OIDC_USERINFO_ENDPOINT`: User info endpoint URL
 
-These can be stored in a `.env` file (which is automatically added to `.gitignore`).
+If any of these variables are missing when you run the `shield` command, it will display clear instructions on what needs to be set in your `.env` file.
 
 ## A Few Considerations
 

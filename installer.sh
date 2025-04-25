@@ -428,21 +428,20 @@ main() {
       echo "app/main.py already exists, leaving unchanged"
   fi
   
-  # Extract and install dev dependencies
-  echo "Extracting dev dependencies from pyproject.toml..."
+  # Extract and install dev dependencies directly from source pyproject.toml
+  echo "Extracting dev dependencies from source pyproject.toml..."
   DEV_DEPENDENCIES=$(extract_dev_dependencies "$SOURCE_DIR/pyproject.toml" 2>/dev/null) || true
   
-  if [ -z "$DEV_DEPENDENCIES" ]; then
-    # Fallback to hardcoded dependencies
-    echo "Could not extract dev dependencies, using fallback dependencies"
-    DEV_DEPENDENCIES="pyaml botocore boto3 click"
+  if [ -n "$DEV_DEPENDENCIES" ]; then
+    # Convert string to array
+    IFS=' ' read -r -a DEV_DEP_ARRAY <<< "$DEV_DEPENDENCIES"
+    
+    # Install dev dependencies
+    install_dependencies "$PKG_MANAGER" "dev" "${DEV_DEP_ARRAY[@]}"
+  else
+    echo "No dev dependencies specified in source pyproject.toml"
+    echo "Only base files will be installed"
   fi
-  
-  # Convert string to array
-  IFS=' ' read -r -a DEV_DEP_ARRAY <<< "$DEV_DEPENDENCIES"
-  
-  # Install dev dependencies
-  install_dependencies "$PKG_MANAGER" "dev" "${DEV_DEP_ARRAY[@]}"
   
   # For demo mode, also install main dependencies
   if [ "$DEMO_MODE" == true ]; then

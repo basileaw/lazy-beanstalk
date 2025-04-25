@@ -5,7 +5,7 @@ Elastic Beanstalk deployment management script.
 """
 
 import sys
-import click
+import argparse
 from typing import Optional
 
 from deployment.modules.setup import (
@@ -51,14 +51,7 @@ def init_environment(command=None):
         return None
 
 
-@click.group()
-def cli():
-    """Elastic Beanstalk deployment management tool."""
-    pass
-
-
-@cli.command()
-def ship():
+def ship_command(args):
     """Deploy the application."""
     try:
         logger.info("Starting deployment process")
@@ -75,8 +68,7 @@ def ship():
         sys.exit(1)
 
 
-@cli.command()
-def scrap():
+def scrap_command(args):
     """Clean up all resources."""
     try:
         logger.info("Starting cleanup process")
@@ -93,8 +85,7 @@ def scrap():
         sys.exit(1)
 
 
-@cli.command()
-def secure():
+def secure_command(args):
     """Enable HTTPS (ACM + Route53) on your EB environment."""
     try:
         logger.info("Starting HTTPS configuration process")
@@ -121,13 +112,7 @@ def secure():
         sys.exit(1)
 
 
-@cli.command()
-@click.option(
-    "--secret",
-    "-s",
-    help="OIDC client secret (can also use OIDC_CLIENT_SECRET env var)",
-)
-def shield(secret: Optional[str] = None):
+def shield_command(args):
     """Configure OIDC authentication for your EB environment."""
     try:
         logger.info("Starting OIDC configuration process")
@@ -140,7 +125,7 @@ def shield(secret: Optional[str] = None):
             logger.error("OIDC configuration validation failed")
             sys.exit(1)
 
-        configure_oidc_auth(config, client_secret=secret)
+        configure_oidc_auth(config, client_secret=args.secret)
     except (ConfigurationError, DeploymentError) as e:
         logger.error(f"OIDC configuration error: {str(e)}")
         sys.exit(1)
@@ -149,5 +134,43 @@ def shield(secret: Optional[str] = None):
         sys.exit(1)
 
 
+def main():
+    """Main entry point with argument parsing"""
+    parser = argparse.ArgumentParser(
+        description="Elastic Beanstalk deployment management tool."
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    subparsers.required = True
+
+    # Ship command
+    ship_parser = subparsers.add_parser("ship", help="Deploy the application.")
+    ship_parser.set_defaults(func=ship_command)
+
+    # Scrap command
+    scrap_parser = subparsers.add_parser("scrap", help="Clean up all resources.")
+    scrap_parser.set_defaults(func=scrap_command)
+
+    # Secure command
+    secure_parser = subparsers.add_parser(
+        "secure", help="Enable HTTPS (ACM + Route53) on your EB environment."
+    )
+    secure_parser.set_defaults(func=secure_command)
+
+    # Shield command
+    shield_parser = subparsers.add_parser(
+        "shield", help="Configure OIDC authentication for your EB environment."
+    )
+    shield_parser.add_argument(
+        "--secret",
+        "-s",
+        help="OIDC client secret (can also use OIDC_CLIENT_SECRET env var)",
+    )
+    shield_parser.set_defaults(func=shield_command)
+
+    # Parse arguments and execute the appropriate function
+    args = parser.parse_args()
+    args.func(args)
+
+
 if __name__ == "__main__":
-    cli()
+    main()

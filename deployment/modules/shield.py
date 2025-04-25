@@ -1,7 +1,6 @@
 # shield.py
 
 import os
-import click
 import getpass
 from typing import Dict, Optional, Tuple
 
@@ -15,110 +14,64 @@ from .setup import (
 )
 
 
-def prompt_for_missing_oidc_vars(config):
-    """Prompt for missing OIDC variables and save them to .env file."""
-    # Define variable mapping with new prefixed names
+def check_oidc_vars(config):
+    """
+    Check for missing OIDC variables and provide instructions for setting them.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        bool: True if all required variables are present, False otherwise
+    """
+    # Define required environment variables
     required_vars = [
-        ("client_id", "LB_OIDC_CLIENT_ID", "Enter OIDC client ID"),
-        ("client_secret", "LB_OIDC_CLIENT_SECRET", "Enter OIDC client secret"),
-        ("issuer", "LB_OIDC_ISSUER", "Enter OIDC issuer URL"),
-        (
-            "endpoints.authorization",
-            "LB_OIDC_AUTH_ENDPOINT",
-            "Enter authorization endpoint URL",
-        ),
-        ("endpoints.token", "LB_OIDC_TOKEN_ENDPOINT", "Enter token endpoint URL"),
-        (
-            "endpoints.userinfo",
-            "LB_OIDC_USERINFO_ENDPOINT",
-            "Enter userinfo endpoint URL",
-        ),
+        ("client_id", "LB_OIDC_CLIENT_ID"),
+        ("client_secret", "LB_OIDC_CLIENT_SECRET"),
+        ("issuer", "LB_OIDC_ISSUER"),
+        ("endpoints.authorization", "LB_OIDC_AUTH_ENDPOINT"),
+        ("endpoints.token", "LB_OIDC_TOKEN_ENDPOINT"),
+        ("endpoints.userinfo", "LB_OIDC_USERINFO_ENDPOINT"),
     ]
 
-    # Find which variables are missing
-    missing = []
-    for config_path, env_var, prompt_text in required_vars:
-        if env_var not in os.environ or not os.environ[env_var]:
-            missing.append((env_var, prompt_text))
-
-    # Check for old variable names in environment
+    # Check for old variable names in environment and map them
     var_mapping = EnvironmentManager.get_old_to_new_env_mapping()
     for old_name, new_name in var_mapping.items():
         if old_name in os.environ and new_name not in os.environ:
             os.environ[new_name] = os.environ[old_name]
             logger.debug(f"Mapped {old_name} to {new_name} in environment")
 
+    # Find which variables are missing
+    missing = []
+    for config_path, env_var in required_vars:
+        if env_var not in os.environ or not os.environ[env_var]:
+            missing.append(env_var)
+
     if not missing:
         return True  # All variables are present
 
-    # Show header for prompts
-    if missing:
-        logger.info("OIDC configuration variables required")
-        logger.info("please provide the following values")
+    # Provide instructions for missing variables
+    logger.error("Missing required OIDC configuration variables:")
+    for var in missing:
+        logger.error(f"  - {var}")
 
-    # Prompt for missing variables
-    new_vars = {}
+    logger.info("\nPlease set these variables in your .env file or environment.")
+    logger.info("Example .env file format:")
+    logger.info("----------------------------------------------------")
+    for config_path, env_var in required_vars:
+        if env_var in missing:
+            logger.info(f"{env_var}=your-value-here")
+    logger.info("----------------------------------------------------")
 
-    for env_var, prompt_text in missing:
-        if env_var == "LB_OIDC_CLIENT_SECRET":
-            value = getpass.getpass(f"{prompt_text}: ")
-        else:
-            value = click.prompt(prompt_text)
+    # Ensure .env is in .gitignore
+    ensure_env_in_gitignore()
 
-        new_vars[env_var] = value
-        os.environ[env_var] = value  # Set for current session
-
-    # Ask if user wants to save to .env
-    if new_vars and click.confirm(
-        "\nWould you like to save these values to .env file for future use?",
-        default=True,
-    ):
-        # Ensure .env is in .gitignore first
-        ensure_env_in_gitignore()
-
-        project_root = ConfigurationManager.get_project_root()
-        env_path = project_root / ".env"
-
-        # Read existing .env if it exists
-        existing_vars = {}
-        if env_path.exists():
-            with open(env_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        existing_vars[key.strip()] = value.strip()
-
-        # Update with new values
-        existing_vars.update(new_vars)
-
-        # Write back to .env
-        with open(env_path, "w") as f:
-            f.write("# OIDC Configuration - SENSITIVE INFORMATION\n\n")
-            for key, value in existing_vars.items():
-                f.write(f"{key}={value}\n")
-
-        # Add explanation about environment variables
-        with open(env_path, "a") as f:
-            f.write(
-                "\n# Note: Variables starting with LB_ are used by Lazy Beanstalk for deployment\n"
-            )
-            f.write(
-                "# Other variables will be passed to your Elastic Beanstalk environment\n"
-            )
-            f.write("# Add your application-specific variables below:\n")
-            f.write("# DATABASE_URL=postgres://user:pass@host:port/db\n")
-            f.write("# API_KEY=your-api-key\n")
-
-        logger.info(f"OIDC configuration values saved to {env_path}")
-
-    return True
+    return False
 
 
 def validate_oidc_config(config: Dict) -> bool:
     """
     Validate OIDC configuration and provide helpful error messages.
-    If interactive mode is enabled, prompt for missing values.
 
     Args:
         config: The loaded configuration dictionary
@@ -130,35 +83,8 @@ def validate_oidc_config(config: Dict) -> bool:
         logger.error("Missing 'oidc' section in configuration.")
         return False
 
-    # Try to get missing variables through prompts
-    if not prompt_for_missing_oidc_vars(config):
-        return False
-
-    # Check for old variables and map them if needed
-    var_mapping = EnvironmentManager.get_old_to_new_env_mapping()
-    for old_name, new_name in var_mapping.items():
-        if old_name in os.environ and new_name not in os.environ:
-            os.environ[new_name] = os.environ[old_name]
-            logger.debug(f"Mapped {old_name} to {new_name} in environment")
-
-    # Final check after prompting
-    required_vars = [
-        "LB_OIDC_CLIENT_ID",
-        "LB_OIDC_CLIENT_SECRET",
-        "LB_OIDC_ISSUER",
-        "LB_OIDC_AUTH_ENDPOINT",
-        "LB_OIDC_TOKEN_ENDPOINT",
-        "LB_OIDC_USERINFO_ENDPOINT",
-    ]
-
-    missing = [
-        var for var in required_vars if var not in os.environ or not os.environ[var]
-    ]
-
-    if missing:
-        logger.error("Still missing required OIDC environment variables:")
-        for var in missing:
-            logger.error(f"  - {var}")
+    # Check for required variables
+    if not check_oidc_vars(config):
         return False
 
     logger.info("OIDC configuration validated successfully")
