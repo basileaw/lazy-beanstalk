@@ -339,25 +339,6 @@ EOF
   fi
 }
 
-# Ensure .env is in .gitignore
-ensure_env_in_gitignore() {
-  echo "Checking .gitignore configuration..."
-  if [ -f ".gitignore" ]; then
-    if ! grep -q "^\.env$" .gitignore; then
-      echo "Adding .env to .gitignore"
-      echo "" >> .gitignore
-      echo "# Environment variables" >> .gitignore
-      echo ".env" >> .gitignore
-    else
-      echo ".env already in .gitignore"
-    fi
-  else
-    echo "Creating .gitignore with .env entry"
-    echo "# Environment variables" > .gitignore
-    echo ".env" >> .gitignore
-  fi
-}
-
 # Main installation process
 main() {
   # For production use GitHub, for local testing use LOCAL_SRC
@@ -462,9 +443,8 @@ main() {
   # Create __init__.py files to solve import issues
   create_init_files
   
-  # Create sample .env file and ensure .gitignore configuration
+  # Create sample .env file
   create_env_sample
-  ensure_env_in_gitignore
   
   echo "Lazy Beanstalk deployment setup complete!"
   echo ""
@@ -472,7 +452,7 @@ main() {
   echo "1. Environment variables starting with LB_ are used for deployment."
   echo "2. All other environment variables will be passed to your application."
   echo "3. See .env.sample for documentation and examples."
-  echo "4. Make sure to add .env to your .gitignore (this was done automatically)."
+  echo "4. IMPORTANT: Add .env to your .gitignore to prevent accidental exposure of secrets."
   echo ""
   echo "To deploy your application:"
   echo "  make serve    # Run locally"
