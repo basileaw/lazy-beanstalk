@@ -339,6 +339,26 @@ EOF
   fi
 }
 
+# Create an empty requirements.txt if no requirements file exists
+create_empty_requirements() {
+  echo "Checking for requirements files..."
+  if [ ! -f "requirements.txt" ] && [ ! -f "pyproject.toml" ] && [ ! -f "Pipfile" ] && [ ! -f "environment.yml" ] && [ ! -f "pdm.lock" ]; then
+    echo "No dependency files found, creating empty requirements.txt"
+    cat > "requirements.txt" << EOF
+# This file was created by Lazy Beanstalk installer
+# The Dockerfile requires at least one dependency file to exist
+# Add your Python dependencies here, one per line:
+# 
+# flask==2.0.1
+# requests>=2.25.0
+# python-dotenv==0.19.0
+EOF
+    echo "Created empty requirements.txt with instructions"
+  else
+    echo "Dependency files already exist, skipping requirements.txt creation"
+  fi
+}
+
 # Main installation process
 main() {
   # For production use GitHub, for local testing use LOCAL_SRC
@@ -445,6 +465,9 @@ main() {
   
   # Create sample .env file
   create_env_sample
+  
+  # Create empty requirements.txt if needed
+  create_empty_requirements
   
   echo "Lazy Beanstalk deployment setup complete!"
   echo ""
