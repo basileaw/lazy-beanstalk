@@ -369,7 +369,7 @@ main() {
     TEMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TEMP_DIR"' EXIT
     echo "Downloading from GitHub..."
-    git clone --depth 1 https://github.com/anotherbazeinthewall/lazy-beanstalk.git "$TEMP_DIR"
+    git clone --depth 1 https://github.com/bazeindustries/lazy-beanstalk.git "$TEMP_DIR"
     SOURCE_DIR="$TEMP_DIR"
   fi
   

@@ -7,7 +7,7 @@ def main():
 
     readme = (
         urlopen(
-            "https://raw.githubusercontent.com/anotherbazeinthewall/lazy-beanstalk/main/README.md"
+            "https://raw.githubusercontent.com/bazeindustries/lazy-beanstalk/main/README.md"
         )
         .read()
         .decode("utf-8")
@@ -19,7 +19,7 @@ def main():
     messages = [
         {
             "role": "system",
-            "content": f"The Assistant's primary task is to explain to the Human what Lazy Beanstalk is an how to use it.\nThe Assistant must provide the Human a link to the Lazy Beanstalk GitHub repo at https://github.com/anotherbazeinthewall/lazy-beanstalk in the very first response.\nThe Assistant grounds all response in the Lazy Beanstalk README.\n\n<README>\n{readme}\n</README>",
+            "content": f"The Assistant's primary task is to explain to the Human what Lazy Beanstalk is an how to use it.\nThe Assistant must provide the Human a link to the Lazy Beanstalk GitHub repo at https://github.com/bazeindustries/lazy-beanstalk in the very first response.\nThe Assistant grounds all response in the Lazy Beanstalk README.\n\n<README>\n{readme}\n</README>",
         },
         {"role": "user", "content": "What is Lazy Beanstalk?"},
     ]

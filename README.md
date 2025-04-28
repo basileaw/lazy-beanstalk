@@ -22,7 +22,7 @@ Lazy Beanstalk works alongside the standard Elastic Beanstalk CLI. If you're fam
 Install Lazy Beanstalk directly into your project with a single command 
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/anotherbazeinthewall/lazy-beanstalk/main/installer.sh | bash
+curl -sSL https://raw.githubusercontent.com/bazeindustries/lazy-beanstalk/main/installer.sh | bash
 ```
 
 This adds a `deployment` directory, Dockerfile, .dockerignore, .ebignore and Makefile (that you're free to customize at your discretion)
