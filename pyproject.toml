@@ -8,8 +8,8 @@ authors = ["Alex Basile <basileaw@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.12"
-terminaide = ">=0.1.1"
-chatline = ">=0.2.0"
+chatline = "^0.2.9"
+terminaide = "^0.3.11"
 
 [tool.poetry.group.dev.dependencies]
 botocore = ">=1.37.34,<2.0.0"
