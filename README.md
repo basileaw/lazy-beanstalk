@@ -1,6 +1,6 @@
 # Lazy Beanstalk
 
-Lazy Beanstalk is a Python deployment package for AWS Elastic Beanstalk that lets you deploy your Python web applications with minimal effort. Perfect for solo developers and Python beginners who want to quickly share their projects without spending days figuring out cloud deployment.
+Lazy Beanstalk is a deployment template for AWS Elastic Beanstalk that lets you ship Python applications using the Docker platofmr with only a couple of commands. Perfect for solo developers and Python beginners who want to quickly share their projects without spending days figuring out cloud deployment.
 
 ## How It Works
 
