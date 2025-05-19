@@ -71,7 +71,7 @@ extract_dev_dependencies() {
     return 1
   fi
   
-  # Use Python to extract dependencies
+  # Use Python to extract dependencies with Poetry support
   python3 -c "
 import sys
 import re
@@ -80,21 +80,33 @@ try:
     with open('$pyproject_path', 'r') as f:
         content = f.read()
     
-    # Find the dev dependencies section
+    # Find the dev dependencies section - try several patterns
     dev_deps = []
+    
+    # Try PEP 621 format
     dev_pattern = r'\[project\.optional-dependencies\].*?dev\s*=\s*\[(.*?)\]'
     dev_match = re.search(dev_pattern, content, re.DOTALL)
+    
+    # Try Poetry old format
+    if not dev_match:
+        dev_pattern = r'\[tool\.poetry\.dev-dependencies\](.*?)(\[|\Z)'
+        dev_match = re.search(dev_pattern, content, re.DOTALL)
+    
+    # Try Poetry new format (with groups)
+    if not dev_match:
+        dev_pattern = r'\[tool\.poetry\.group\.dev\.dependencies\](.*?)(\[|\Z)'
+        dev_match = re.search(dev_pattern, content, re.DOTALL)
     
     if dev_match:
         deps_text = dev_match.group(1)
         # Extract individual dependencies
-        for line in deps_text.split(','):
+        for line in deps_text.split('\\n'):
             line = line.strip()
-            if not line:
+            if not line or line.startswith('['):
                 continue
             
             # Get package name (everything before version specifier)
-            package_match = re.match(r'[\"\']?([a-zA-Z0-9_-]+)', line.strip())
+            package_match = re.match(r'([a-zA-Z0-9_-]+)(\s*=|\s*\^|\s*~|\s*>|\s*<)', line)
             if package_match:
                 package = package_match.group(1)
                 dev_deps.append(package)
@@ -117,7 +129,7 @@ extract_main_dependencies() {
     return 1
   fi
   
-  # Use Python to extract dependencies from the main project section
+  # Use Python to extract dependencies with Poetry support
   python3 -c "
 import sys
 import re
@@ -126,21 +138,28 @@ try:
     with open('$pyproject_path', 'r') as f:
         content = f.read()
     
-    # Find the main dependencies section
+    # Find the main dependencies section - try several patterns
     main_deps = []
+    
+    # Try PEP 621 format
     main_pattern = r'\[project\].*?dependencies\s*=\s*\[(.*?)\]'
     main_match = re.search(main_pattern, content, re.DOTALL)
+    
+    # Try Poetry format
+    if not main_match:
+        main_pattern = r'\[tool\.poetry\.dependencies\](.*?)(\[|\Z)'
+        main_match = re.search(main_pattern, content, re.DOTALL)
     
     if main_match:
         deps_text = main_match.group(1)
         # Extract individual dependencies
-        for line in deps_text.split(','):
+        for line in deps_text.split('\\n'):
             line = line.strip()
-            if not line:
-                continue
+            if not line or line.startswith('[') or 'python' in line:
+                continue  # Skip python dependency and section markers
             
             # Get package name (everything before version specifier)
-            package_match = re.match(r'[\"\']?([a-zA-Z0-9_-]+)', line.strip())
+            package_match = re.match(r'([a-zA-Z0-9_-]+)(\s*=|\s*\^|\s*~|\s*>|\s*<)', line)
             if package_match:
                 package = package_match.group(1)
                 main_deps.append(package)
@@ -290,6 +309,7 @@ install_dependencies() {
 # Create Python __init__.py files to solve import issues
 create_init_files() {
   echo "Creating __init__.py files for proper module imports..."
+  mkdir -p deployment/modules
   touch deployment/__init__.py
   touch deployment/modules/__init__.py
 }
