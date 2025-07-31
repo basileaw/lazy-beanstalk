@@ -9,7 +9,9 @@ authors = ["Alex Basile <basileaw@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.12"
 chatline = "^0.2.9"
-terminaide = "^0.3.11"
+terminaide = "^1.1.1"
+starlette = "^0.47.2"
+fastapi = "^0.116.1"
 
 [tool.poetry.group.dev.dependencies]
 botocore = ">=1.37.34,<2.0.0"
