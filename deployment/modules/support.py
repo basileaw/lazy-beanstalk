@@ -160,19 +160,22 @@ def get_env_settings(config: Dict) -> List[Dict[str, str]]:
         },
     ]
 
-    # Add spot instance configuration if enabled in config
-    if "spot_options" in config["instance"] and config["instance"]["spot_options"].get(
-        "enabled", False
-    ):
-        settings.append(
-            {
-                "Namespace": "aws:ec2:instances",
-                "OptionName": "EnableSpot",
-                "Value": "true",
-            }
-        )
+    # Add spot instance configuration - always set EnableSpot for 1:1 sync
+    spot_enabled = (
+        "spot_options" in config["instance"] 
+        and config["instance"]["spot_options"].get("enabled", False)
+    )
+    
+    settings.append(
+        {
+            "Namespace": "aws:ec2:instances",
+            "OptionName": "EnableSpot",
+            "Value": "true" if spot_enabled else "false",
+        }
+    )
 
-        # If you want to make all instances spot (no on-demand base)
+    if spot_enabled:
+        # Configure spot instance settings when enabled
         settings.append(
             {
                 "Namespace": "aws:ec2:instances",
@@ -198,6 +201,23 @@ def get_env_settings(config: Dict) -> List[Dict[str, str]]:
                     "Value": str(config["instance"]["spot_options"]["max_price"]),
                 }
             )
+    else:
+        # Reset spot fleet settings to defaults when spot is disabled
+        settings.append(
+            {
+                "Namespace": "aws:ec2:instances",
+                "OptionName": "SpotFleetOnDemandBase",
+                "Value": "0",  # Default: start with on-demand instances
+            }
+        )
+
+        settings.append(
+            {
+                "Namespace": "aws:ec2:instances",
+                "OptionName": "SpotFleetOnDemandAboveBasePercentage",
+                "Value": "100",  # Default: use 100% on-demand above base
+            }
+        )
 
     return settings
 

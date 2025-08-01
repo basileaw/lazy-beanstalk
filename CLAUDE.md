@@ -25,11 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Core Structure
 Lazy Beanstalk is a deployment template that simplifies shipping Python applications to AWS Elastic Beanstalk. The architecture consists of:
 
-1. **Main Application** (`app/main.py`): 
-   - Uses terminaide to serve a chatline interface explaining Lazy Beanstalk
-   - Entry point for the Docker container
-
-2. **Deployment System** (`deployment/`):
+1. **Deployment System** (`deployment/`):
    - `manage.py`: CLI entry point for all deployment commands
    - `modules/`: Core deployment functionality
      - `setup.py`: Configuration management and AWS client initialization
@@ -39,7 +35,7 @@ Lazy Beanstalk is a deployment template that simplifies shipping Python applicat
      - `scrap.py`: Resource cleanup
      - `support.py`: Shared utilities and error handling
 
-3. **Configuration** (`lazy-beanstalk.yml`):
+2. **Configuration** (`lazy-beanstalk.yml`):
    - YAML-based configuration with variable interpolation
    - Supports ${VARIABLE} syntax for dynamic values
    - Manages AWS resources, IAM roles, and deployment settings
@@ -89,3 +85,15 @@ Lazy Beanstalk is a deployment template that simplifies shipping Python applicat
 - Manages policy version limits (keeps max 5 versions)
 - Removes policies from AWS that no longer exist locally
 - Policies are named as `{role_name}-{policy_filename}` in AWS
+
+### Configuration Sync (lazy-beanstalk.yml)
+- Core infrastructure settings sync on every deployment:
+  - Instance type, autoscaling limits, IAM roles
+  - Spot instance configuration (enable/disable)
+  - Environment variables from `.env` file
+- Some settings are creation-only (platform, load balancer type)
+- AWS tags and application descriptions require manual implementation
+
+## Manual Testing
+
+The project contains a demo/testing app (`app/main.py`) that uses terminaide to serve a chatline interface explaining Lazy Beanstalk, which is the main entry point for the Docker container. 
