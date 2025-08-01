@@ -261,6 +261,9 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
             else:
                 logger.info("No custom policies discovered in policies directory")
 
+        # Track which policies we've processed locally
+        processed_policy_arns = set()
+
         for policy_file in custom_policy_files:
             name = f"{role_name}-{policy_file.replace('.json', '')}"
             policy_arn = f"arn:aws:iam::{account}:policy/{name}"
@@ -273,19 +276,38 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
                 logger.error(f"Failed to load policy {policy_file}: {e}")
                 continue
 
-            # Check if policy exists
+            # Check if policy exists and needs updating
             policy_exists = False
+            policy_needs_update = False
             try:
-                iam_client.get_policy(PolicyArn=policy_arn)
+                policy_response = iam_client.get_policy(PolicyArn=policy_arn)
                 policy_exists = True
                 logger.info(f"Policy {name} already exists with ARN: {policy_arn}")
+                
+                # Get current policy document to compare with local version
+                default_version_id = policy_response['Policy']['DefaultVersionId']
+                policy_version = iam_client.get_policy_version(
+                    PolicyArn=policy_arn,
+                    VersionId=default_version_id
+                )
+                current_policy_doc = json.loads(
+                    policy_version['PolicyVersion']['Document']
+                )
+                
+                # Compare normalized policy documents
+                if json.dumps(policy_doc, sort_keys=True) != json.dumps(current_policy_doc, sort_keys=True):
+                    policy_needs_update = True
+                    logger.info(f"Policy {name} content has changed, will update")
+                else:
+                    logger.info(f"Policy {name} content is up to date")
+                    
             except ClientError as e:
                 if e.response["Error"]["Code"] != "NoSuchEntity":
                     logger.error(f"Error checking policy existence: {e}")
                     raise
                 logger.info(f"Policy {name} does not exist, will create it")
 
-            # Create policy if it doesn't exist
+            # Create policy if it doesn't exist or update if needed
             if not policy_exists:
                 try:
                     logger.info(f"Creating policy {name} from {policy_file}")
@@ -319,6 +341,44 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
                     else:
                         logger.error(f"Failed to create policy {name}: {e}")
                         raise
+            
+            # Update policy if it exists but content has changed
+            elif policy_needs_update:
+                try:
+                    logger.info(f"Creating new version for policy {name}")
+                    
+                    # Create new policy version
+                    iam_client.create_policy_version(
+                        PolicyArn=policy_arn,
+                        PolicyDocument=json.dumps(policy_doc),
+                        SetAsDefault=True
+                    )
+                    logger.info(f"Updated policy {name} with new version")
+                    
+                    # Clean up old versions (AWS allows max 5 versions)
+                    try:
+                        versions_response = iam_client.list_policy_versions(PolicyArn=policy_arn)
+                        versions = versions_response['Versions']
+                        
+                        # Sort by creation date and keep only non-default versions
+                        non_default_versions = [v for v in versions if not v['IsDefaultVersion']]
+                        non_default_versions.sort(key=lambda x: x['CreateDate'])
+                        
+                        # Delete oldest versions if we have more than 4 non-default
+                        # (keeping 1 default + 4 non-default = 5 total)
+                        while len(non_default_versions) > 4:
+                            oldest = non_default_versions.pop(0)
+                            logger.info(f"Deleting old policy version {oldest['VersionId']} for {name}")
+                            iam_client.delete_policy_version(
+                                PolicyArn=policy_arn,
+                                VersionId=oldest['VersionId']
+                            )
+                    except Exception as e:
+                        logger.warning(f"Error cleaning up old policy versions: {e}")
+                        
+                except ClientError as e:
+                    logger.error(f"Failed to update policy {name}: {e}")
+                    raise
 
             # Attach policy to role
             try:
@@ -341,9 +401,51 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
                     logger.info(
                         f"Policy {name} is already attached to role {role_name}"
                     )
+                    
+                # Add to processed set
+                processed_policy_arns.add(policy_arn)
+                
             except ClientError as e:
                 logger.error(f"Failed to attach policy {name} to role {role_name}: {e}")
                 raise
+
+        # Clean up policies that are no longer in local directory
+        logger.info("Checking for policies to remove that are no longer in local directory")
+        try:
+            attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
+            
+            for policy in attached_policies['AttachedPolicies']:
+                policy_arn = policy['PolicyArn']
+                policy_name = policy['PolicyName']
+                
+                # Check if this is a custom policy (has our role name prefix) and wasn't processed
+                if (policy_name.startswith(f"{role_name}-") and 
+                    policy_arn.startswith(f"arn:aws:iam::{account}:policy/") and
+                    policy_arn not in processed_policy_arns):
+                    
+                    logger.info(f"Policy {policy_name} no longer exists locally, detaching from role")
+                    
+                    # Detach the policy
+                    iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+                    logger.info(f"Detached policy {policy_name} from role {role_name}")
+                    
+                    # Optionally delete the policy if it's not attached to any other roles
+                    try:
+                        # Check if policy has any other attachments
+                        entities = iam_client.list_entities_for_policy(PolicyArn=policy_arn)
+                        
+                        if (not entities['PolicyGroups'] and 
+                            not entities['PolicyUsers'] and 
+                            len(entities['PolicyRoles']) == 0):  # Was only attached to this role
+                            
+                            logger.info(f"Deleting orphaned policy {policy_name}")
+                            iam_client.delete_policy(PolicyArn=policy_arn)
+                            logger.info(f"Deleted policy {policy_name}")
+                    except Exception as e:
+                        logger.warning(f"Error checking/deleting orphaned policy {policy_name}: {e}")
+                        
+        except Exception as e:
+            logger.warning(f"Error cleaning up removed policies: {e}")
 
         logger.info(f"Waiting for role {role_name} to be fully created and available")
         iam_client.get_waiter("role_exists").wait(RoleName=role_name)
