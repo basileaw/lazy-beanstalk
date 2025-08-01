@@ -310,9 +310,8 @@ def manage_iam_role(role_name: str, policies: Dict, action: str = "create") -> N
                     PolicyArn=policy_arn,
                     VersionId=default_version_id
                 )
-                current_policy_doc = json.loads(
-                    policy_version['PolicyVersion']['Document']
-                )
+                # AWS returns the policy document as a URL-decoded dictionary, not a JSON string
+                current_policy_doc = policy_version['PolicyVersion']['Document']
                 
                 # Compare normalized policy documents
                 if json.dumps(policy_doc, sort_keys=True) != json.dumps(current_policy_doc, sort_keys=True):
