@@ -91,8 +91,12 @@ Lazy Beanstalk is a deployment template that simplifies shipping Python applicat
   - Instance type, autoscaling limits, IAM roles
   - Spot instance configuration (enable/disable)
   - Environment variables from `.env` file
-- Some settings are creation-only (platform, load balancer type)
-- AWS tags and application descriptions require manual implementation
+  - AWS resource tags from `aws.tags` section
+  - Application description updates
+- Immutable settings (creation-only):
+  - Platform/solution stack - warns if changed
+  - Load balancer type - warns if changed
+- Warnings displayed when attempting to change immutable settings
 
 ## Manual Testing
 

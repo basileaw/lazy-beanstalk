@@ -259,16 +259,64 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
         env_var_settings = format_env_vars_for_eb(env_vars)
         settings.extend(env_var_settings)
 
+    # Extract tags from configuration
+    tags = []
+    if "aws" in config and "tags" in config["aws"]:
+        for key, value in config["aws"]["tags"].items():
+            tags.append({"Key": key, "Value": str(value)})
+        if tags:
+            logger.info(f"Found {len(tags)} tags to apply")
+
     state = None
 
     if env_exists:
         logger.info(f"Updating existing environment: {env_name}")
+        
+        # Check for changes to immutable settings
+        current_env = envs[0]
+        
+        # Check platform/solution stack
+        if current_env["SolutionStackName"] != config["aws"]["platform"]:
+            logger.warning("Platform change detected but cannot be updated after environment creation")
+            logger.warning(f"  Current: {current_env['SolutionStackName']}")
+            logger.warning(f"  Configured: {config['aws']['platform']}")
+            logger.warning("  To change platform, you must terminate and recreate the environment")
+        
+        # Check load balancer type
+        try:
+            config_settings = eb_client.describe_configuration_settings(
+                ApplicationName=config["application"]["name"],
+                EnvironmentName=env_name
+            )["ConfigurationSettings"][0]
+            
+            # Find current load balancer type
+            current_lb_type = None
+            for option in config_settings.get("OptionSettings", []):
+                if (option["Namespace"] == "aws:elasticbeanstalk:environment" and
+                    option["OptionName"] == "LoadBalancerType"):
+                    current_lb_type = option["Value"]
+                    break
+            
+            if current_lb_type and current_lb_type != config["instance"]["elb_type"]:
+                logger.warning("Load balancer type change detected but cannot be updated after environment creation")
+                logger.warning(f"  Current: {current_lb_type}")
+                logger.warning(f"  Configured: {config['instance']['elb_type']}")
+                logger.warning("  To change load balancer type, you must terminate and recreate the environment")
+        except Exception as e:
+            logger.debug(f"Could not check load balancer type: {e}")
+        
         # Preserve state before update
         state = preserve_env_state(env_name, project_name)
 
-        eb_client.update_environment(
-            EnvironmentName=env_name, VersionLabel=version, OptionSettings=settings
-        )
+        update_params = {
+            "EnvironmentName": env_name,
+            "VersionLabel": version,
+            "OptionSettings": settings
+        }
+        if tags:
+            update_params["Tags"] = tags
+            
+        eb_client.update_environment(**update_params)
     else:
         logger.info(f"Creating new environment: {env_name}")
         settings.append(
@@ -278,13 +326,17 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
                 "Value": config["instance"]["elb_type"],
             }
         )
-        eb_client.create_environment(
-            ApplicationName=config["application"]["name"],
-            EnvironmentName=env_name,
-            VersionLabel=version,
-            SolutionStackName=config["aws"]["platform"],
-            OptionSettings=settings,
-        )
+        create_params = {
+            "ApplicationName": config["application"]["name"],
+            "EnvironmentName": env_name,
+            "VersionLabel": version,
+            "SolutionStackName": config["aws"]["platform"],
+            "OptionSettings": settings,
+        }
+        if tags:
+            create_params["Tags"] = tags
+            
+        eb_client.create_environment(**create_params)
 
     # Wait for environment to be ready
     support.wait_for_env_status(env_name, "Ready")
@@ -379,6 +431,14 @@ def deploy_application(config: Dict[str, Any]) -> None:
         )
     else:
         logger.info(f"Using existing application: {app_name}")
+        # Update application description if provided
+        description = config.get("application", {}).get("description")
+        if description:
+            logger.info(f"Updating application description")
+            eb_client.update_application(
+                ApplicationName=app_name,
+                Description=description
+            )
 
     # Create and upload application version
     version = f"v{datetime.now():%Y%m%d_%H%M%S}"
