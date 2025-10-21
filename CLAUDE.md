@@ -1,103 +1,193 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+AI maintainer context for lazy-beanstalk codebase. For user-facing docs, see @README.md.
 
-## Development Commands
+## Project Overview
 
-### Local Development
-- `make serve` - Run the application locally (executes `python app/main.py`)
-- `make spin` - Run the application in Docker container for production-like testing (port 8000)
+Lazy Beanstalk is a pip-installable Python package that simplifies AWS Elastic Beanstalk deployments.
 
-### Deployment Commands
-- `make ship` - Deploy to AWS Elastic Beanstalk (creates/updates environment)
-- `make secure` - Enable HTTPS using AWS Certificate Manager and Route 53
-- `make shield` - Configure OIDC authentication on the load balancer
-- `make scrap` - Remove all AWS resources created by Lazy Beanstalk
+**Version**: 2.0.0
 
-### Environment Setup
-- Python 3.12+ required
-- Uses Poetry for dependency management
-- Environment variables stored in `.env` file (not tracked in git)
-- Variables starting with `LB_` are deployment-only and not passed to the application
+**Key Architecture**: Pip package with CLI + Python API, smart defaults, stateful deployments via EB CLI-compatible config.
 
-## Architecture Overview
+## Package Structure
 
-### Core Structure
-Lazy Beanstalk is a deployment template that simplifies shipping Python applications to AWS Elastic Beanstalk. The architecture consists of:
+```
+lazy-beanstalk/
+├── lazy_beanstalk/          # Main package
+│   ├── config.py            # Config, state, AWS client management
+│   ├── ship.py              # Deployment orchestration
+│   ├── secure.py            # HTTPS + auto-OIDC
+│   ├── shield.py            # Standalone OIDC
+│   ├── scrap.py             # Resource cleanup
+│   ├── support.py           # Shared AWS utilities
+│   ├── cli.py               # Click CLI wrapper
+│   └── defaults/policies/   # Default trust policies (eb, ec2)
+├── tests/                   # Pytest suite
+├── app/                     # Demo app (terminaide chatline)
+└── pyproject.toml
+```
 
-1. **Deployment System** (`deployment/`):
-   - `manage.py`: CLI entry point for all deployment commands
-   - `modules/`: Core deployment functionality
-     - `setup.py`: Configuration management and AWS client initialization
-     - `ship.py`: Application deployment logic
-     - `secure.py`: HTTPS configuration with ACM/Route53
-     - `shield.py`: OIDC authentication setup
-     - `scrap.py`: Resource cleanup
-     - `support.py`: Shared utilities and error handling
+## Core Modules
 
-2. **Configuration** (`lazy-beanstalk.yml`):
-   - YAML-based configuration with variable interpolation
-   - Supports ${VARIABLE} syntax for dynamic values
-   - Manages AWS resources, IAM roles, and deployment settings
+### config.py
+Central configuration, state management, AWS client caching.
 
-### Docker Support
-- Multi-package manager support (Poetry, PDM, Pipenv, Conda, pip, etc.)
-- Auto-detects and uses appropriate package manager
-- Builds optimized Python slim images
-- Mounts AWS credentials for local testing
+**Key Classes**:
+- `ClientManager`: Singleton AWS client cache with region management
+- `StateManager`: Manages `.elasticbeanstalk/config.yml` (EB CLI compatible YAML format)
 
-### AWS Integration
-- Creates and manages IAM roles automatically
-- Supports custom IAM policies via `deployment/policies/`
-- Uses Application Load Balancer for HTTPS/OIDC
-- Spot instance support for cost optimization
-- Tag-based resource management
+**Key Functions**:
+- `merge_config(**kwargs)`: Implements 5-layer config hierarchy
+- `detect_changes(current, state)`: Determines if environment update needed
+- `get_env_var(name, fallback, default, required)`: Hybrid env var resolution
+- `get_oidc_env_var(name, required)`: OIDC-specific with unprefixed fallback
 
-## Key Implementation Details
+**Config Hierarchy** (low → high priority):
+1. Hardcoded defaults (see @README.md)
+2. **Environment variables** (`.env` auto-loaded via python-dotenv)
+3. EB CLI config (`.elasticbeanstalk/config.yml` global section)
+4. lazy_beanstalk state (`.elasticbeanstalk/config.yml` lazy_beanstalk section)
+5. API parameters / CLI flags
 
-### Configuration Management
-- ConfigurationManager handles YAML loading with variable substitution
-- Caches AWS platform information to reduce API calls
-- Integrates with EB CLI configuration when available
+**Environment Variable Design**:
+- Hybrid naming: `LB_*` canonical with standard fallbacks
+- Examples: `LB_REGION` → `AWS_REGION` → `AWS_DEFAULT_REGION`
+- OIDC provider creds: `LB_OIDC_CLIENT_ID` → `OIDC_CLIENT_ID` (reusable)
+- ALB-specific: `LB_OIDC_SESSION_TIMEOUT` (no fallback)
 
-### Deployment Flow
-1. Validates configuration and AWS credentials
-2. Creates/updates IAM roles and instance profiles
-3. Packages application into Docker image
-4. Uploads to S3 and creates application version
-5. Creates/updates Elastic Beanstalk environment
+### ship.py
+Deployment orchestration with change detection.
 
-### HTTPS Setup
-- Interactive certificate selection from ACM
-- Configures ALB listener rules
-- Creates Route53 DNS records based on domain mode
-- Supports root, subdomain, and custom domain configurations
+**Flow**: Load state → merge config → validate → detect changes → create/update IAM → bundle app → upload S3 → create/update environment → save state
 
-### OIDC Authentication
-- Requires complete OIDC provider configuration in `.env`
-- Configures ALB authentication rules
-- Protects all application paths behind login
+**Key Implementation Details**:
+- Bundle creation: Uses `.ebignore` (fallback `.gitignore`), excludes `.git` by default, filters dirs before descent in `os.walk()`
+- Change detection: Compares current vs previous state to determine update vs no-op
+- HTTPS preservation: Captures HTTPS config before update, restores after
+- Spot instances: 1:1 sync (always sets `EnableSpot` option)
 
-### IAM Policy Management (1:1 Local:Cloud Sync)
-- Automatically syncs local policy files with AWS on each deployment
-- Compares policy content and updates AWS when local changes are detected
-- Creates new policy versions in AWS (maintains history)
-- Manages policy version limits (keeps max 5 versions)
-- Removes policies from AWS that no longer exist locally
-- Policies are named as `{role_name}-{policy_filename}` in AWS
+**Immutable Settings** (warn but continue):
+- Platform/solution stack (requires recreation)
+- Load balancer type (requires recreation)
+- Tags (only settable at creation time)
 
-### Configuration Sync (lazy-beanstalk.yml)
-- Core infrastructure settings sync on every deployment:
-  - Instance type, autoscaling limits, IAM roles
-  - Spot instance configuration (enable/disable)
-  - Environment variables from `.env` file
-  - AWS resource tags from `aws.tags` section
-  - Application description updates
-- Immutable settings (creation-only):
-  - Platform/solution stack - warns if changed
-  - Load balancer type - warns if changed
-- Warnings displayed when attempting to change immutable settings
+### secure.py
+HTTPS via ACM + Route 53. **Auto-configures OIDC** if env vars present.
 
-## Manual Testing
+**Flow**: Load state → pick cert → validate domains → setup HTTPS listener → HTTP→HTTPS redirect → create DNS records → **check for OIDC env vars** → auto-call `shield()` if present
 
-The project contains a demo/testing app (`app/main.py`) that uses terminaide to serve a chatline interface explaining Lazy Beanstalk, which is the main entry point for the Docker container. 
+**Domain Modes** (see @README.md for user docs):
+- `sub`: `{app-name}.example.com`
+- `root`: `example.com`
+- `custom`: Multiple from `LB_CUSTOM_SUBDOMAINS` comma-separated
+
+**Auto-OIDC Logic** (lines 551-570):
+- After HTTPS completes, checks `get_oidc_env_var("CLIENT_ID")` or `get_oidc_env_var("ISSUER")`
+- If present: calls `shield()`, returns combined result with `oidc` key
+- If fails: logs warning, suggests manual `lb shield`
+- If not present: logs hint to add OIDC vars
+
+### shield.py
+Standalone OIDC authentication on ALB. Can also be auto-invoked by `secure()`.
+
+**Flow**: Load state → read OIDC env vars → validate params → find HTTPS listener (requires `secure` first) → clear existing rules → set default 503 → create auth rule for `/*`
+
+**Interactive Fallback**: Prompts for `client_secret` via `getpass` if not in env vars (lines 224-225)
+
+**Required Params**: All 6 OIDC endpoints must be provided (validated in `validate_oidc_params()`)
+
+### scrap.py
+Resource cleanup with safety checks.
+
+**Flow**: Load state → confirm (unless `force=True`) → cleanup OIDC → cleanup HTTPS/DNS → terminate environment → if no other envs: cleanup IAM + S3 + app → delete state
+
+**Safety**: Only deletes shared resources (IAM, S3, app) if no other environments exist
+
+### support.py
+Shared AWS utilities and helpers.
+
+**Key Helpers**:
+- `aws_handler`: Decorator for AWS error handling
+- `wait_for_env_status()`: Polls until target status
+- `manage_iam_role()`: 1:1 local→cloud policy sync
+- `find_environment_load_balancer()`: Finds ALB by tags
+- `preserve_https_config()` / `restore_https_config()`: HTTPS preservation during updates
+
+**IAM Policy Sync** (1:1 local files → AWS):
+- Compares content, creates new policy versions when changed
+- Deletes AWS policies not in local dir
+- Maintains 5 versions max
+- Naming: `{role_name}-{policy_filename}`
+
+### cli.py
+Click CLI wrapper around Python API. Maps CLI options to function kwargs. Loads `.env` via `dotenv.load_dotenv()`.
+
+## State Management
+
+**File**: `.elasticbeanstalk/config.yml` (YAML, EB CLI compatible)
+
+**Structure**:
+- Standard sections: `branch-defaults`, `global` (for EB CLI compatibility)
+- Custom section: `lazy_beanstalk` (our state - EB CLI ignores it)
+
+**Change Detection**: Compares current config vs `lazy_beanstalk` section state. Triggers environment update if changes detected in: `instance_type`, `spot_instances`, `min/max_instances`, `platform`, `region`, `env_vars`, `tags`.
+
+## Design Decisions
+
+### v1 → v2 Migration Rationale
+
+**Why pip package?** Original template approach required copying deployment code into every project. Pip install = single source of truth, easy updates.
+
+**Why smart defaults?** Original YAML config was verbose. Defaults enable `lb ship` with zero config.
+
+**Why state file?** Needed change detection for intelligent updates (update vs recreation). Chose EB CLI format for `eb logs`, `eb ssh` compatibility.
+
+**Why user Dockerfile?** Original auto-generated Dockerfiles couldn't handle all package managers. User's Dockerfile = full control, less complexity.
+
+**Why environment variables?** Reduces config file verbosity. Hybrid `LB_*` with fallbacks enables reuse of standard vars (`AWS_REGION`, `OIDC_*`).
+
+**Why auto-OIDC in secure?** User workflow is typically `lb ship && lb secure && lb shield`. Auto-detection reduces to `lb ship && lb secure`.
+
+## Testing
+
+**Automated**: `pytest` (9 tests covering config, ship, secure, shield, scrap)
+
+**Manual**: `app/` contains demo terminaide chatline app for end-to-end testing
+
+## AWS Resources
+
+See @README.md for user-facing resource docs. Naming conventions:
+- IAM roles: `{app_name}-eb-role`, `{app_name}-ec2-role`
+- S3 bucket: `elasticbeanstalk-{region}-{app_name.lower()}`
+- App versions: `v{YYYYMMDD_HHMMSS}`
+
+## Gotchas & Implementation Notes
+
+**Tags**: Only settable at environment creation, not updates (AWS limitation)
+
+**Platform changes**: Can't change platform after creation (AWS limitation). Code warns but continues.
+
+**HTTPS preservation**: Environment updates would lose HTTPS config. Fixed via `preserve_env_state()` / `restore_env_state()` in ship.py.
+
+**Bundle creation**: Must exclude `.git` explicitly (not in `.gitignore`). Must filter `os.walk()` dirs list in-place to prevent descending into excluded dirs.
+
+**Circular import**: `secure.py` imports `shield()` for auto-OIDC. Works because import is at module level.
+
+**Dependencies**: See @pyproject.toml. Key: `boto3`, `pyyaml`, `click`, `python-dotenv`
+
+## Development Workflow
+
+**Before committing**:
+1. `pytest` (all tests must pass)
+2. Update @README.md if user-facing changes
+3. Update @CLAUDE.md if architecture changes
+4. No duplication between docs (README = user, CLAUDE = maintainer)
+
+**Commit style**: See @~/.claude/CLAUDE.md global instructions
+
+## Known Limitations
+
+- CLI doesn't support passing app `env_vars` (use Python API)
+- Can't change platform/LB type after creation (AWS limitation)
+- Can't update tags after creation (AWS limitation)

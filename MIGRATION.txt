@@ -1,0 +1,377 @@
+# MIGRATING FROM LAZY-BEANSTALK 1.x TO 2.0
+
+## Overview
+
+Lazy-Beanstalk 2.0 is a complete rewrite focused on simplicity and ease of use.
+The major changes are:
+
+1. Configuration moved from `config.yml` to `.env` file
+2. Installed as a pip package with `lb` CLI command
+3. State stored in `.elasticbeanstalk/config.yml` (EB CLI compatible)
+4. No more variable interpolation - direct environment variable support
+5. Simpler deployment workflow
+
+## Breaking Changes
+
+### 1. Configuration System
+
+**OLD (1.x):**
+```yaml
+# config.yml
+aws:
+  region: ${AWS_REGION}
+
+application:
+  name: ${PROJECT_NAME}
+
+instance:
+  type: t4g.nano
+  autoscaling:
+    min_instances: 1
+    max_instances: 1
+```
+
+**NEW (2.0):**
+```bash
+# .env
+AWS_REGION=us-west-2
+LB_INSTANCE_TYPE=t4g.nano
+LB_MIN_INSTANCES=1
+LB_MAX_INSTANCES=1
+```
+
+### 2. Commands
+
+**OLD (1.x):**
+```bash
+python deployment/manage.py deploy
+python deployment/manage.py secure
+python deployment/manage.py shield
+python deployment/manage.py destroy
+```
+
+**NEW (2.0):**
+```bash
+lb ship      # Deploy
+lb secure    # Enable HTTPS (auto-configures OIDC if env vars present)
+lb shield    # Add OIDC auth (standalone, or use lb secure with OIDC env vars)
+lb scrap     # Destroy
+```
+
+### 3. Custom IAM Policies
+
+**OLD (1.x):**
+```yaml
+# config.yml
+iam:
+  instance_role_policies:
+    custom_policies:
+      - bedrock.json
+      - s3-access.json
+```
+
+**NEW (2.0):**
+- Just put JSON files in `./policies/` directory
+- Automatically detected and attached
+- No configuration needed
+
+### 4. HTTPS Configuration
+
+**OLD (1.x):**
+```yaml
+# config.yml
+https:
+  domain_mode: "custom"
+  custom_subdomains: ["api", "admin"]
+  include_root: false
+```
+
+**NEW (2.0):**
+```bash
+# .env
+LB_DOMAIN_MODE=custom
+LB_CUSTOM_SUBDOMAINS=api,admin
+LB_INCLUDE_ROOT=false
+```
+
+### 5. OIDC Configuration
+
+**OLD (1.x):**
+```yaml
+# config.yml
+oidc:
+  client_id: ${OIDC_CLIENT_ID}
+  client_secret: ${OIDC_CLIENT_SECRET}
+  issuer: ${OIDC_ISSUER}
+  # ... etc
+```
+
+**NEW (2.0):**
+```bash
+# .env
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-secret
+OIDC_ISSUER=https://your-idp.com
+OIDC_AUTH_ENDPOINT=https://...
+OIDC_TOKEN_ENDPOINT=https://...
+OIDC_USERINFO_ENDPOINT=https://...
+```
+
+## Migration Steps
+
+### Step 1: Install Lazy-Beanstalk 2.0
+
+```bash
+# Remove old deployment scripts
+rm -rf deployment/
+
+# Install new version
+pip install git+https://github.com/bazeindustries/lazy-beanstalk.git
+
+# Or with pipx (recommended)
+pipx install git+https://github.com/bazeindustries/lazy-beanstalk.git
+
+# Verify installation
+lb --version
+```
+
+### Step 2: Convert config.yml to .env
+
+Create a `.env` file in your project root. Here's a mapping of common settings:
+
+**Deployment Settings:**
+```
+config.yml:                    .env:
+-----------                    -----
+aws.region                  -> AWS_REGION
+instance.type               -> LB_INSTANCE_TYPE
+instance.spot_options.enabled -> LB_SPOT_INSTANCES
+instance.autoscaling.min_instances -> LB_MIN_INSTANCES
+instance.autoscaling.max_instances -> LB_MAX_INSTANCES
+```
+
+**HTTPS Settings:**
+```
+https.domain_mode           -> LB_DOMAIN_MODE
+https.custom_subdomains     -> LB_CUSTOM_SUBDOMAINS (comma-separated)
+https.include_root          -> LB_INCLUDE_ROOT
+https.ttl                   -> LB_DNS_TTL
+```
+
+**OIDC Settings:**
+```
+oidc.client_id              -> OIDC_CLIENT_ID
+oidc.client_secret          -> OIDC_CLIENT_SECRET
+oidc.issuer                 -> OIDC_ISSUER
+oidc.endpoints.authorization -> OIDC_AUTH_ENDPOINT
+oidc.endpoints.token        -> OIDC_TOKEN_ENDPOINT
+oidc.endpoints.userinfo     -> OIDC_USERINFO_ENDPOINT
+```
+
+### Step 3: Migrate Custom Policies
+
+**OLD:**
+- Policies in `deployment/policies/*.json`
+- Listed in `config.yml`
+
+**NEW:**
+- Move policies to `./policies/*.json` (project root)
+- Remove from config - auto-detected
+
+```bash
+# If you have custom policies
+mkdir -p policies
+cp deployment/policies/*.json policies/
+```
+
+### Step 4: Clean Up Old Files
+
+```bash
+# Remove old deployment directory
+rm -rf deployment/
+
+# Remove old config
+rm config.yml
+
+# Keep your .env file
+# Add .env to .gitignore if not already there
+echo ".env" >> .gitignore
+```
+
+### Step 5: Deploy with New Version
+
+```bash
+# Deploy your application
+lb ship
+
+# Enable HTTPS (if you were using it)
+# Note: If OIDC env vars are present, lb secure will auto-configure OIDC
+lb secure
+
+# Add OIDC separately (only if not using auto-configuration)
+lb shield
+```
+
+## Complete Example Migration
+
+**OLD config.yml:**
+```yaml
+aws:
+  region: us-west-2
+
+application:
+  name: my-app
+
+instance:
+  type: t4g.small
+  spot_options:
+    enabled: true
+  autoscaling:
+    min_instances: 2
+    max_instances: 4
+
+iam:
+  instance_role_policies:
+    custom_policies:
+      - bedrock.json
+
+https:
+  domain_mode: custom
+  custom_subdomains: ["api", "admin"]
+
+oidc:
+  client_id: ${OIDC_CLIENT_ID}
+  client_secret: ${OIDC_CLIENT_SECRET}
+  issuer: ${OIDC_ISSUER}
+```
+
+**NEW .env:**
+```bash
+# AWS
+AWS_REGION=us-west-2
+
+# Instance
+LB_INSTANCE_TYPE=t4g.small
+LB_SPOT_INSTANCES=true
+LB_MIN_INSTANCES=2
+LB_MAX_INSTANCES=4
+
+# HTTPS
+LB_DOMAIN_MODE=custom
+LB_CUSTOM_SUBDOMAINS=api,admin
+
+# OIDC
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-secret
+OIDC_ISSUER=https://your-idp.com
+OIDC_AUTH_ENDPOINT=https://your-idp.com/oauth2/authorize
+OIDC_TOKEN_ENDPOINT=https://your-idp.com/oauth2/token
+OIDC_USERINFO_ENDPOINT=https://your-idp.com/oauth2/userInfo
+```
+
+**Custom policies:**
+```bash
+# Just move the file
+mkdir -p policies
+cp deployment/policies/bedrock.json policies/
+```
+
+**Deploy:**
+```bash
+# With OIDC env vars in .env, secure auto-configures OIDC
+lb ship && lb secure
+
+# Or separately:
+# lb ship && lb secure && lb shield
+```
+
+## Environment Variable Reference
+
+### Standard AWS (no prefix needed)
+```
+AWS_REGION              # AWS region
+AWS_PROFILE             # AWS profile name
+```
+
+### Deployment (LB_ prefix)
+```
+LB_INSTANCE_TYPE        # EC2 instance type
+LB_SPOT_INSTANCES       # true/false for spot instances
+LB_MIN_INSTANCES        # Minimum autoscaling instances
+LB_MAX_INSTANCES        # Maximum autoscaling instances
+LB_CERTIFICATE_ARN      # ACM certificate ARN (optional)
+LB_DOMAIN_MODE          # sub/root/custom
+LB_CUSTOM_SUBDOMAINS    # Comma-separated list for custom mode
+LB_INCLUDE_ROOT         # true/false to include root domain
+```
+
+### OIDC (no prefix - reusable)
+```
+OIDC_CLIENT_ID          # Client ID from IdP
+OIDC_CLIENT_SECRET      # Client secret from IdP
+OIDC_ISSUER             # Issuer URL
+OIDC_AUTH_ENDPOINT      # Authorization endpoint
+OIDC_TOKEN_ENDPOINT     # Token endpoint
+OIDC_USERINFO_ENDPOINT  # Userinfo endpoint
+```
+
+### OIDC ALB Config (LB_ prefix)
+```
+LB_OIDC_SESSION_TIMEOUT # Session timeout in seconds (default: 36000)
+LB_OIDC_SCOPE           # OAuth scope (default: openid)
+```
+
+## Troubleshooting
+
+### "No deployment configuration found"
+
+You need to run `lb ship` first. This creates the `.elasticbeanstalk/config.yml`
+state file that other commands depend on.
+
+### "Missing required OIDC parameters"
+
+Make sure your `.env` file is in the current directory and contains all required
+OIDC parameters. The CLI automatically loads `.env` on startup.
+
+### Custom policies not found
+
+Policies should be in `./policies/*.json` (relative to current directory).
+The directory is auto-detected if it exists.
+
+### Can't find my old state
+
+The old state was in `config.yml`. The new state is in
+`.elasticbeanstalk/config.yml` under the `lazy_beanstalk` section.
+
+If you need to migrate an existing deployment:
+1. The infrastructure is the same - no changes needed in AWS
+2. Just run `lb ship` to recreate the state file
+3. Your existing resources will be detected and updated
+
+## Key Differences Summary
+
+| Feature | 1.x | 2.0 |
+|---------|-----|-----|
+| Config file | config.yml | .env |
+| Command | python deployment/manage.py | lb |
+| State storage | config.yml | .elasticbeanstalk/config.yml |
+| Custom policies | Listed in config | Auto-detected from ./policies |
+| Variable syntax | ${VAR} interpolation | Direct env vars |
+| Installation | Copy scripts | pip install |
+
+## Getting Help
+
+- GitHub Issues: https://github.com/bazeindustries/lazy-beanstalk/issues
+- Documentation: Check README.md and CLAUDE.md
+- CLI Help: `lb --help`, `lb ship --help`, etc.
+
+## Backwards Compatibility
+
+Version 2.0 is NOT backwards compatible with 1.x configuration files.
+You must migrate your configuration as described above.
+
+However, your AWS infrastructure doesn't need to change - the same resources
+are created and managed. You can migrate an existing 1.x deployment by:
+1. Installing 2.0
+2. Creating a .env file with your settings
+3. Running `lb ship` to sync the state

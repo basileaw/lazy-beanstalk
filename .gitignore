@@ -5,12 +5,12 @@
 **/*.pyo
 **/*.pyd
 
-.elasticbeanstalk/*
-!.elasticbeanstalk/*.cfg.yml
-!.elasticbeanstalk/*.global.yml
+.elasticbeanstalk/
 
 .archive/
 .DS_Store
-.venv
-.vscode
+.venv/
+.vscode/
 .env
+
+.pytest_cache

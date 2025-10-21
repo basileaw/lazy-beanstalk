@@ -1,0 +1,20 @@
+# tasks.yaml
+
+tasks:
+  # Local development tasks
+  serve:
+    shell: "python app/main.py"
+    help: "Run the application locally"
+
+  spin:
+    shell: |
+      docker build -t lazy-beanstalk-demo . && \
+      docker run -p 8000:8000 -v ~/.aws:/root/.aws:ro lazy-beanstalk-demo
+    help: "Build and run the application in Docker container"
+
+  # Testing
+  test:
+    shell: "pytest -v"
+    help: "Run all tests"
+    env:
+      PYTHONPATH: "."

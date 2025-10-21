@@ -12,7 +12,7 @@ docker-compose.yml
 
 .archive/
 .DS_Store
-.venv
-.vscode
+.venv/
+.vscode/
 .env
-.git
+.git/

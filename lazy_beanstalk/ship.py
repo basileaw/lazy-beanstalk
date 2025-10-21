@@ -16,26 +16,47 @@ from typing import Dict, Optional, Any, List
 from botocore.exceptions import ClientError
 
 from . import support
-from .setup import (
-    ConfigurationManager,
+from .config import (
     ClientManager,
+    StateManager,
     logger,
-    get_eb_cli_platform_name,
-    EnvironmentManager,
+    DeploymentError,
+    ConfigurationError,
+    merge_config,
+    validate_dockerfile_exists,
+    get_custom_policies_dir,
+    MANAGED_POLICIES,
+    detect_changes,
 )
 
 
-def create_app_bundle() -> str:
-    """Create a ZIP archive of application files based on .ebignore."""
+def create_app_bundle(working_dir: Optional[Path] = None) -> str:
+    """Create a ZIP archive of application files based on .ebignore or .gitignore."""
     logger.info("Creating application bundle")
-    project_root = ConfigurationManager.get_project_root()
-    ebignore_path = project_root / ".ebignore"
+    if working_dir is None:
+        working_dir = Path.cwd()
 
-    # Parse .ebignore file
+    ebignore_path = working_dir / ".ebignore"
+    gitignore_path = working_dir / ".gitignore"
+
+    # Parse .ebignore file, fall back to .gitignore if .ebignore doesn't exist
     patterns = []
     negated_patterns = []
+    ignore_file = None
+
+    # Always exclude these directories
+    default_excludes = [".git", ".gitignore", ".ebignore"]
+    patterns.extend(default_excludes)
+
     if ebignore_path.exists():
-        with open(ebignore_path, "r") as f:
+        ignore_file = ebignore_path
+        logger.debug("Using .ebignore for bundle exclusions")
+    elif gitignore_path.exists():
+        ignore_file = gitignore_path
+        logger.debug("Using .gitignore for bundle exclusions (no .ebignore found)")
+
+    if ignore_file:
+        with open(ignore_file, "r") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
@@ -44,6 +65,34 @@ def create_app_bundle() -> str:
                     else:
                         patterns.append(line)
 
+    # Helper function to check if path should be excluded
+    def should_exclude(path_normalized: str) -> bool:
+        """Check if a path should be excluded based on patterns."""
+        for pattern in patterns:
+            # Handle directory patterns ending with slash
+            test_pattern = pattern + "**" if pattern.endswith("/") else pattern
+
+            # Handle single directory matching
+            if "/" not in test_pattern and "/" in path_normalized:
+                dirs = path_normalized.split("/")
+                if any(fnmatch.fnmatch(d, test_pattern) for d in dirs):
+                    return True
+            # Direct pattern match
+            elif fnmatch.fnmatch(path_normalized, test_pattern):
+                return True
+            # Handle ** patterns
+            elif "**" in test_pattern:
+                parts = test_pattern.split("**")
+                if (
+                    test_pattern.startswith("**")
+                    and path_normalized.endswith(parts[1])
+                ) or (
+                    test_pattern.endswith("**")
+                    and path_normalized.startswith(parts[0])
+                ):
+                    return True
+        return False
+
     # Create bundle
     bundle_path = (
         Path(tempfile.gettempdir()) / f"app_bundle_{datetime.now():%Y%m%d_%H%M%S}.zip"
@@ -51,42 +100,33 @@ def create_app_bundle() -> str:
     file_count = 0
 
     with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, _, files in os.walk(str(project_root)):
+        for root, dirs, files in os.walk(str(working_dir)):
+            # Get relative path of current directory
+            root_rel = os.path.relpath(root, str(working_dir))
+            root_normalized = root_rel.replace(os.sep, "/") if root_rel != "." else ""
+
+            # Filter out directories that should be excluded (modifies dirs in-place)
+            dirs_to_remove = []
+            for dir_name in dirs:
+                dir_path = os.path.join(root_normalized, dir_name) if root_normalized else dir_name
+                dir_path_normalized = dir_path.replace(os.sep, "/")
+
+                if should_exclude(dir_path_normalized):
+                    dirs_to_remove.append(dir_name)
+
+            for dir_name in dirs_to_remove:
+                dirs.remove(dir_name)
+
+            # Process files
             for filename in files:
                 file_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(file_path, str(project_root))
+                rel_path = os.path.relpath(file_path, str(working_dir))
 
                 # Convert Windows paths to forward slashes for pattern matching
                 rel_path_normalized = rel_path.replace(os.sep, "/")
 
                 # Check if file should be excluded
-                excluded = False
-                for pattern in patterns:
-                    # Handle directory patterns ending with slash
-                    if pattern.endswith("/"):
-                        pattern = pattern + "**"
-                    # Handle single directory matching
-                    if "/" not in pattern and "/" in rel_path_normalized:
-                        dirs = rel_path_normalized.split("/")
-                        if any(fnmatch.fnmatch(d, pattern) for d in dirs):
-                            excluded = True
-                            break
-                    # Direct pattern match
-                    elif fnmatch.fnmatch(rel_path_normalized, pattern):
-                        excluded = True
-                        break
-                    # Handle ** patterns
-                    elif "**" in pattern:
-                        parts = pattern.split("**")
-                        if (
-                            pattern.startswith("**")
-                            and rel_path_normalized.endswith(parts[1])
-                        ) or (
-                            pattern.endswith("**")
-                            and rel_path_normalized.startswith(parts[0])
-                        ):
-                            excluded = True
-                            break
+                excluded = should_exclude(rel_path_normalized)
 
                 # Check if excluded file should be re-included
                 if excluded:
@@ -95,11 +135,10 @@ def create_app_bundle() -> str:
                             excluded = False
                             break
 
-                # Add file if not excluded
-                if not excluded and not rel_path == ".ebignore":
+                # Add file if not excluded and not the ignore file itself
+                if not excluded and rel_path not in [".ebignore", ".gitignore"]:
                     zipf.write(file_path, rel_path)
                     file_count += 1
-                    # No progress indicator needed - removed
 
     logger.info(f"added {file_count} files")
     return str(bundle_path)
@@ -109,11 +148,18 @@ def create_app_bundle() -> str:
 def ensure_instance_profile(config: Dict[str, Any]) -> None:
     """Set up instance profile and its associated role."""
     iam_client = ClientManager.get_client("iam")
-    profile_name = config["iam"]["instance_profile_name"]
-    role_name = config["iam"]["instance_role_name"]
+    profile_name = config["instance_profile_name"]
+    role_name = config["instance_role_name"]
 
     # Set up the role first
-    support.manage_iam_role(role_name, config["iam"]["instance_role_policies"])
+    custom_policies_dir = get_custom_policies_dir(config.get("policies_dir"))
+
+    support.manage_iam_role(
+        role_name=role_name,
+        trust_policy_name="ec2",
+        managed_policy_arns=MANAGED_POLICIES["instance_role"],
+        custom_policies_dir=custom_policies_dir,
+    )
 
     try:
         iam_client.get_instance_profile(InstanceProfileName=profile_name)
@@ -159,13 +205,13 @@ def wait_for_version(app_name: str, version: str) -> None:
         )["ApplicationVersions"]
 
         if not versions:
-            raise support.DeploymentError(f"Version {version} not found")
+            raise DeploymentError(f"Version {version} not found")
 
         status = versions[0]["Status"]
         if status == "PROCESSED":
             break
         elif status == "FAILED":
-            raise support.DeploymentError(f"Version {version} processing failed")
+            raise DeploymentError(f"Version {version} processing failed")
 
         time.sleep(3)
 
@@ -240,8 +286,8 @@ def format_env_vars_for_eb(env_vars: Dict[str, str]) -> List[Dict[str, str]]:
 def create_or_update_env(config: Dict[str, Any], version: str) -> None:
     """Create or update Elastic Beanstalk environment."""
     eb_client = ClientManager.get_client("elasticbeanstalk")
-    project_name = ConfigurationManager.get_project_name()
-    env_name = config["application"]["environment"]
+    app_name = config["app_name"]
+    env_name = config["environment_name"]
 
     # Check if environment exists
     envs = eb_client.describe_environments(
@@ -252,8 +298,8 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
     # Get basic settings
     settings = support.get_env_settings(config)
 
-    # Get application environment variables if enabled
-    env_vars = EnvironmentManager.get_application_env_vars(config)
+    # Get application environment variables
+    env_vars = config.get("env_vars", {})
     if env_vars:
         logger.info(f"Found {len(env_vars)} application environment variables")
         env_var_settings = format_env_vars_for_eb(env_vars)
@@ -261,8 +307,8 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
 
     # Extract tags from configuration
     tags = []
-    if "aws" in config and "tags" in config["aws"]:
-        for key, value in config["aws"]["tags"].items():
+    if "tags" in config:
+        for key, value in config["tags"].items():
             tags.append({"Key": key, "Value": str(value)})
         if tags:
             logger.info(f"Found {len(tags)} tags to apply")
@@ -271,24 +317,24 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
 
     if env_exists:
         logger.info(f"Updating existing environment: {env_name}")
-        
+
         # Check for changes to immutable settings
         current_env = envs[0]
-        
+
         # Check platform/solution stack
-        if current_env["SolutionStackName"] != config["aws"]["platform"]:
+        if current_env["SolutionStackName"] != config["platform"]:
             logger.warning("Platform change detected but cannot be updated after environment creation")
             logger.warning(f"  Current: {current_env['SolutionStackName']}")
-            logger.warning(f"  Configured: {config['aws']['platform']}")
+            logger.warning(f"  Configured: {config['platform']}")
             logger.warning("  To change platform, you must terminate and recreate the environment")
-        
+
         # Check load balancer type
         try:
             config_settings = eb_client.describe_configuration_settings(
-                ApplicationName=config["application"]["name"],
+                ApplicationName=app_name,
                 EnvironmentName=env_name
             )["ConfigurationSettings"][0]
-            
+
             # Find current load balancer type
             current_lb_type = None
             for option in config_settings.get("OptionSettings", []):
@@ -296,26 +342,26 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
                     option["OptionName"] == "LoadBalancerType"):
                     current_lb_type = option["Value"]
                     break
-            
-            if current_lb_type and current_lb_type != config["instance"]["elb_type"]:
+
+            if current_lb_type and current_lb_type != config["elb_type"]:
                 logger.warning("Load balancer type change detected but cannot be updated after environment creation")
                 logger.warning(f"  Current: {current_lb_type}")
-                logger.warning(f"  Configured: {config['instance']['elb_type']}")
+                logger.warning(f"  Configured: {config['elb_type']}")
                 logger.warning("  To change load balancer type, you must terminate and recreate the environment")
         except Exception as e:
             logger.debug(f"Could not check load balancer type: {e}")
-        
-        # Preserve state before update
-        state = preserve_env_state(env_name, project_name)
 
+        # Preserve state before update
+        state = preserve_env_state(env_name, app_name)
+
+        # Note: update_environment does not support Tags parameter
+        # Tags can only be set during environment creation
         update_params = {
             "EnvironmentName": env_name,
             "VersionLabel": version,
             "OptionSettings": settings
         }
-        if tags:
-            update_params["Tags"] = tags
-            
+
         eb_client.update_environment(**update_params)
     else:
         logger.info(f"Creating new environment: {env_name}")
@@ -323,19 +369,19 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
             {
                 "Namespace": "aws:elasticbeanstalk:environment",
                 "OptionName": "LoadBalancerType",
-                "Value": config["instance"]["elb_type"],
+                "Value": config["elb_type"],
             }
         )
         create_params = {
-            "ApplicationName": config["application"]["name"],
+            "ApplicationName": app_name,
             "EnvironmentName": env_name,
             "VersionLabel": version,
-            "SolutionStackName": config["aws"]["platform"],
+            "SolutionStackName": config["platform"],
             "OptionSettings": settings,
         }
         if tags:
             create_params["Tags"] = tags
-            
+
         eb_client.create_environment(**create_params)
 
     # Wait for environment to be ready
@@ -343,37 +389,42 @@ def create_or_update_env(config: Dict[str, Any], version: str) -> None:
 
     # Restore state if needed
     if state:
-        restore_env_state(state, project_name)
+        restore_env_state(state, app_name)
 
 
-def create_eb_cli_config(config: Dict[str, Any]) -> None:
+def build_eb_cli_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Create EB CLI configuration file from the main config.yml.
+    Build EB CLI configuration structure (without writing to file).
 
     Args:
-        config: The loaded and processed config dictionary
-    """
-    project_root = ConfigurationManager.get_project_root()
-    eb_dir = project_root / ".elasticbeanstalk"
-    eb_dir.mkdir(exist_ok=True)
+        config: The merged configuration dictionary
 
-    # Get the solution stack name and save it to cache
-    solution_stack = config["aws"]["platform"]
-    ConfigurationManager.save_solution_stack(solution_stack)
+    Returns:
+        EB CLI config dictionary
+    """
+    # Convert solution stack to EB CLI platform name
+    solution_stack = config["platform"]
+    # Simple conversion - just extract the Docker + Amazon Linux part
+    if "Amazon Linux 2023" in solution_stack:
+        platform_name = "Docker running on 64bit Amazon Linux 2023"
+    elif "Amazon Linux 2" in solution_stack:
+        platform_name = "Docker running on 64bit Amazon Linux 2"
+    else:
+        platform_name = "Docker"
 
     eb_config = {
         "branch-defaults": {
             "main": {
-                "environment": config["application"]["environment"],
+                "environment": config["environment_name"],
                 "group_suffix": None,
             }
         },
         "global": {
-            "application_name": config["application"]["name"],
+            "application_name": config["app_name"],
             "branch": None,
             "default_ec2_keyname": None,
-            "default_platform": get_eb_cli_platform_name(solution_stack),
-            "default_region": config["aws"]["region"],
+            "default_platform": platform_name,
+            "default_region": config["region"],
             "include_git_submodules": True,
             "instance_profile": None,
             "platform_name": None,
@@ -385,63 +436,94 @@ def create_eb_cli_config(config: Dict[str, Any]) -> None:
         },
     }
 
-    # Write the config file
-    config_path = eb_dir / "config.yml"
-    with open(config_path, "w") as f:
-        yaml.safe_dump(eb_config, f, sort_keys=True)
-    logger.info(f"Created EB CLI configuration in {config_path}")
+    return eb_config
 
 
-def deploy_application(config: Dict[str, Any]) -> None:
-    """Deploy the application to Elastic Beanstalk."""
-    project_name = ConfigurationManager.get_project_name()
-    region = config["aws"]["region"]
-    platform = config["aws"]["platform"]
+def ship(**kwargs) -> Dict[str, Any]:
+    """
+    Deploy application to AWS Elastic Beanstalk.
+
+    Args:
+        app_name (str): Application name (default: current directory name)
+        environment_name (str): EB environment name (default: {app_name}-env)
+        region (str): AWS region (default: us-west-2)
+        instance_type (str): EC2 instance type (default: t4g.nano)
+        spot_instances (bool): Use spot instances (default: False)
+        min_instances (int): Min autoscaling instances (default: 1)
+        max_instances (int): Max autoscaling instances (default: 1)
+        policies_dir (str): Path to custom IAM policies directory (default: None)
+        env_vars (dict): Environment variables to pass to application (default: {})
+        tags (dict): AWS resource tags (default: {"Environment": "development", "ManagedBy": "lazy-beanstalk"})
+        dockerfile_path (str): Path to Dockerfile (default: ./Dockerfile)
+        aws_profile (str): AWS profile name (default: None, uses boto3 defaults)
+
+    Returns:
+        Dict with deployment details (environment URL, app name, version, etc.)
+    """
+    # Load existing state
+    prev_state = StateManager.load_state()
+
+    # Merge configuration
+    config = merge_config(**kwargs)
+
+    # Validate Dockerfile exists
+    validate_dockerfile_exists(config["dockerfile_path"])
+
+    # Detect changes
+    if prev_state:
+        change_info = detect_changes(config, prev_state)
+        if change_info["changed"]:
+            logger.info("Detected changes:")
+            for change in change_info["changes_list"]:
+                logger.info(f"  - {change}")
 
     logger.info("Starting deployment")
-    logger.info(f"Deploying to region: {region}")
-    logger.info(f"Using platform: {platform}")
+    logger.info(f"App: {config['app_name']}")
+    logger.info(f"Environment: {config['environment_name']}")
+    logger.info(f"Region: {config['region']}")
+    logger.info(f"Platform: {config['platform']}")
 
-    # Create EB CLI config file
-    create_eb_cli_config(config)
+    # Build EB CLI config structure
+    eb_cli_config = build_eb_cli_config(config)
 
-    # Set up IAM resources
+    # Set up AWS clients
     eb_client = ClientManager.get_client("elasticbeanstalk")
-    iam_client = ClientManager.get_client("iam")
     s3_client = ClientManager.get_client("s3")
-    sts_client = ClientManager.get_client("sts")
 
     # Set up service role
+    custom_policies_dir = get_custom_policies_dir(config.get("policies_dir"))
     support.manage_iam_role(
-        config["iam"]["service_role_name"], config["iam"]["service_role_policies"]
+        role_name=config["service_role_name"],
+        trust_policy_name="eb",
+        managed_policy_arns=MANAGED_POLICIES["service_role"],
+        custom_policies_dir=None,  # Service role doesn't get custom policies
     )
 
     # Set up instance profile
     ensure_instance_profile(config)
 
     # Create/update application
-    app_name = config["application"]["name"]
+    app_name = config["app_name"]
+    app_description = f"{app_name} application deployed with lazy-beanstalk"
+
     if not eb_client.describe_applications(ApplicationNames=[app_name])["Applications"]:
         logger.info(f"Creating application: {app_name}")
         eb_client.create_application(
             ApplicationName=app_name,
-            Description=config.get("application", {}).get(
-                "description", "Application created by deployment script"
-            ),
+            Description=app_description,
         )
     else:
         logger.info(f"Using existing application: {app_name}")
-        # Update application description if provided
-        description = config.get("application", {}).get("description")
-        if description:
-            logger.info(f"Updating application description")
-            eb_client.update_application(
-                ApplicationName=app_name,
-                Description=description
-            )
+        # Update application description
+        logger.info(f"Updating application description")
+        eb_client.update_application(
+            ApplicationName=app_name,
+            Description=app_description
+        )
 
     # Create and upload application version
     version = f"v{datetime.now():%Y%m%d_%H%M%S}"
+    region = config["region"]
     bucket = f"elasticbeanstalk-{region}-{app_name.lower()}"
 
     # Check if bucket exists
@@ -486,4 +568,36 @@ def deploy_application(config: Dict[str, Any]) -> None:
     # Create or update environment
     create_or_update_env(config, version)
 
-    logger.info(f"Deployment completed successfully: {app_name} {version}")
+    # Get environment URL
+    env = eb_client.describe_environments(
+        EnvironmentNames=[config["environment_name"]], IncludeDeleted=False
+    )["Environments"][0]
+
+    environment_url = env.get("EndpointURL") or env.get("CNAME")
+
+    logger.info(f"Deployment completed successfully!")
+    logger.info(f"Application URL: http://{environment_url}")
+
+    # Save state
+    deployment_state = {
+        "instance_type": config["instance_type"],
+        "spot_instances": config["spot_instances"],
+        "min_instances": config["min_instances"],
+        "max_instances": config["max_instances"],
+        "platform": config["platform"],
+        "env_vars": config.get("env_vars", {}),
+        "tags": config.get("tags", {}),
+        "last_version": version,
+        "environment_url": environment_url,
+    }
+
+    StateManager.save_state(deployment_state, eb_cli_config=eb_cli_config)
+
+    # Return deployment details
+    return {
+        "app_name": app_name,
+        "environment_name": config["environment_name"],
+        "environment_url": environment_url,
+        "version": version,
+        "region": region,
+    }

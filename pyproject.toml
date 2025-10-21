@@ -2,21 +2,46 @@
 
 [tool.poetry]
 name = "lazy-beanstalk"
-version = "0.0.0"
-description = "A template for deploying Python web apps to AWS Elastic Beanstalk"
+version = "2.0.0"
+description = "Simple AWS Elastic Beanstalk deployment tool with CLI and Python API"
 authors = ["Alex Basile <basileaw@gmail.com>"]
+readme = "README.md"
+homepage = "https://github.com/bazeindustries/lazy-beanstalk"
+repository = "https://github.com/bazeindustries/lazy-beanstalk"
+keywords = ["aws", "elastic-beanstalk", "deployment", "docker", "devops"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+packages = [{ include = "lazy_beanstalk" }]
 
 [tool.poetry.dependencies]
 python = "^3.12"
-chatline = "^0.2.9"
-terminaide = "^1.1.1"
-starlette = "^0.47.2"
-fastapi = "^0.116.1"
+boto3 = ">=1.37.34,<2.0.0"
+botocore = ">=1.37.34,<2.0.0"
+pyyaml = "^6.0.2"
+click = "^8.1.0"
+rich = ">=13.0.0"
+terminaide = "^1.4.4"
+chatline = "^0.4.0"
+python-dotenv = "^1.1.1"
+
 
 [tool.poetry.group.dev.dependencies]
-botocore = ">=1.37.34,<2.0.0"
-boto3 = ">=1.37.34,<2.0.0"
-pyyaml = "^6.0.2"
+pytest = "^8.0.0"
+pytest-mock = "^3.12.0"
+poethepoet = "^0.37.0"
+toolbox = {git = "https://github.com/basileaw/toolbox.git"}
+
+[tool.poetry.scripts]
+lb = "lazy_beanstalk.cli:main"
+
+[tool.poe]
+include = ["tasks.yaml"]
 
 [build-system]
 requires = ["poetry-core"]
