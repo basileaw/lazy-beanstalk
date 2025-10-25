@@ -162,11 +162,14 @@ def get_oidc_env_var(name: str, required: bool = False) -> Optional[str]:
 def load_app_env_vars(deployment_env_file: str = ".env.lb") -> Dict[str, str]:
     """
     Load all .env* files and return vars to pass to EB environment.
-    Excludes vars from deployment env file (.env.lb by default).
+
+    Filtering rules:
+    1. Vars from deployment env file (.env.lb) are excluded
+    2. Vars starting with LB_ prefix are excluded (deployment-only)
 
     This allows separation of:
     - App vars (.env, .env.production, etc.) → passed to EB
-    - Deployment vars (.env.lb) → used locally only
+    - Deployment vars (.env.lb or LB_* prefix) → used locally only
 
     Args:
         deployment_env_file: File containing deployment-only vars (default: .env.lb)
@@ -174,15 +177,25 @@ def load_app_env_vars(deployment_env_file: str = ".env.lb") -> Dict[str, str]:
     Returns:
         Dict of environment variables to pass to EB
 
-    Example:
+    Examples:
+        # Separate files (explicit separation)
         # .env
         DATABASE_URL=postgres://...
 
         # .env.lb
         AWS_REGION=us-west-2
-        OIDC_CLIENT_SECRET=...
+        LB_INSTANCE_TYPE=t4g.nano
 
         # Result: only DATABASE_URL passed to EB
+
+        # Single file (prefix-based filtering)
+        # .env
+        DATABASE_URL=postgres://...
+        AWS_REGION=us-west-2              # ← Passed to EB
+        LB_INSTANCE_TYPE=t4g.nano         # ← NOT passed (LB_ prefix)
+        LB_OIDC_CLIENT_SECRET=secret      # ← NOT passed (LB_ prefix)
+
+        # Result: only DATABASE_URL and AWS_REGION passed to EB
     """
     from dotenv import dotenv_values
     from pathlib import Path
@@ -205,8 +218,11 @@ def load_app_env_vars(deployment_env_file: str = ".env.lb") -> Dict[str, str]:
             logger.debug(f"Loading {len(file_vars)} vars from {env_file.name}")
             app_vars.update(file_vars)
 
-    # Filter out deployment vars (in case of overlap)
-    filtered_vars = {k: v for k, v in app_vars.items() if k not in deployment_vars}
+    # Filter out deployment vars and LB_ prefixed vars
+    filtered_vars = {
+        k: v for k, v in app_vars.items()
+        if k not in deployment_vars and not k.startswith("LB_")
+    }
 
     if filtered_vars:
         logger.info(f"Auto-loaded {len(filtered_vars)} app environment variables from .env files")

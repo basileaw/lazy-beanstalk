@@ -59,8 +59,9 @@ Central configuration, state management, AWS client caching.
 **Auto-Loading Pattern**:
 - All `.env*` files loaded and passed to EB
 - EXCEPT `.env.lb` (deployment config only, never passed to EB)
+- EXCEPT vars starting with `LB_` prefix (deployment config only)
 - Use `--deployment-env` flag to specify alternative exclusion file
-- `load_app_env_vars()` handles filtering logic
+- `load_app_env_vars()` handles filtering logic (line 222-225)
 - All `.env*` files excluded from bundle (never uploaded)
 
 ### ship.py

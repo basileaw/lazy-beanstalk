@@ -176,18 +176,20 @@ OIDC_USERINFO_ENDPOINT=https://your-idp.com/oauth2/userInfo
 
 **How It Works**:
 1. All `.env*` files are auto-loaded
-2. Vars from `.env.lb` are used for deployment config ONLY
-3. Vars from all other `.env*` files are passed to your EB application
-4. All `.env*` files are excluded from the deployment bundle (never uploaded)
-5. Your app reads vars via `os.getenv()` in EB
+2. Vars from `.env.lb` are excluded (deployment config only)
+3. Vars starting with `LB_` prefix are excluded (deployment config only)
+4. Everything else is passed to your EB application
+5. All `.env*` files are excluded from the deployment bundle (never uploaded)
+6. Your app reads vars via `os.getenv()` in EB
 
-**Single File Option**:
+**Single File Option** (using `LB_` prefix for filtering):
 ```bash
-# .env - everything in one file (all passed to EB)
-AWS_REGION=us-west-2
-LB_INSTANCE_TYPE=t4g.small
+# .env - everything in one file
 DATABASE_URL=postgres://...
 API_KEY=secret123
+AWS_REGION=us-west-2              # ← Passed to EB
+LB_INSTANCE_TYPE=t4g.small        # ← NOT passed (LB_ prefix)
+LB_OIDC_CLIENT_SECRET=secret      # ← NOT passed (LB_ prefix)
 ```
 
 **Custom Deployment File**:
