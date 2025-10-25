@@ -44,8 +44,9 @@ def create_app_bundle(working_dir: Optional[Path] = None) -> str:
     negated_patterns = []
     ignore_file = None
 
-    # Always exclude these directories
-    default_excludes = [".git", ".gitignore", ".ebignore"]
+    # Always exclude these files and directories
+    # .env* files should never be bundled - env vars passed via EB configuration
+    default_excludes = [".git", ".gitignore", ".ebignore", ".env*"]
     patterns.extend(default_excludes)
 
     if ebignore_path.exists():

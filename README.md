@@ -147,22 +147,25 @@ Configuration is merged from multiple sources (lowest to highest priority):
 
 ### Environment Variables
 
-**Deployment Configuration** (via `.env` file):
+Lazy Beanstalk supports **automatic .env file loading** with smart separation of deployment vs application vars.
+
+**Best Practice Pattern (Recommended)**:
 
 ```bash
-# .env file (auto-loaded)
+# .env - application vars (AUTO-PASSED to EB ✅)
+DATABASE_URL=postgres://...
+API_KEY=secret123
+REDIS_URL=redis://...
+
+# .env.lb - deployment vars only (NEVER passed to EB ❌)
 AWS_REGION=us-west-2
 LB_INSTANCE_TYPE=t4g.small
 LB_SPOT_INSTANCES=true
 LB_MIN_INSTANCES=2
 LB_MAX_INSTANCES=4
-
-# HTTPS
 LB_CERTIFICATE_ARN=arn:aws:acm:...
 LB_DOMAIN_MODE=custom
 LB_CUSTOM_SUBDOMAINS=api,admin,app
-
-# OIDC (auto-configures when running 'lb secure')
 OIDC_CLIENT_ID=your-client-id
 OIDC_CLIENT_SECRET=your-secret
 OIDC_ISSUER=https://your-idp.com
@@ -171,15 +174,25 @@ OIDC_TOKEN_ENDPOINT=https://your-idp.com/oauth2/token
 OIDC_USERINFO_ENDPOINT=https://your-idp.com/oauth2/userInfo
 ```
 
-**Application Environment Variables** (passed to your app):
+**How It Works**:
+1. All `.env*` files are auto-loaded
+2. Vars from `.env.lb` are used for deployment config ONLY
+3. Vars from all other `.env*` files are passed to your EB application
+4. All `.env*` files are excluded from the deployment bundle (never uploaded)
+5. Your app reads vars via `os.getenv()` in EB
 
-```python
-ship(
-    env_vars={
-        "DATABASE_URL": os.getenv("DATABASE_URL"),
-        "API_KEY": os.getenv("API_KEY")
-    }
-)
+**Single File Option**:
+```bash
+# .env - everything in one file (all passed to EB)
+AWS_REGION=us-west-2
+LB_INSTANCE_TYPE=t4g.small
+DATABASE_URL=postgres://...
+API_KEY=secret123
+```
+
+**Custom Deployment File**:
+```bash
+lb ship --deployment-env .env.deployment  # Use this instead of .env.lb
 ```
 
 ### State File
@@ -267,10 +280,12 @@ Deploy your application to AWS Elastic Beanstalk.
 - `--max-instances` - Max autoscaling instances (default: 1)
 - `--policies-dir` - Path to custom IAM policies directory
 - `--dockerfile-path` - Path to Dockerfile (default: ./Dockerfile)
+- `--deployment-env` - Deployment env file to exclude from EB (default: .env.lb)
 
 **Example**:
 ```bash
 lb ship --region us-east-1 --instance-type t3.small --spot --min-instances 2 --max-instances 4
+lb ship --deployment-env .env.deployment  # Use custom deployment file
 ```
 
 ### `lb secure`

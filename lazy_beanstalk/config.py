@@ -159,6 +159,61 @@ def get_oidc_env_var(name: str, required: bool = False) -> Optional[str]:
     return None
 
 
+def load_app_env_vars(deployment_env_file: str = ".env.lb") -> Dict[str, str]:
+    """
+    Load all .env* files and return vars to pass to EB environment.
+    Excludes vars from deployment env file (.env.lb by default).
+
+    This allows separation of:
+    - App vars (.env, .env.production, etc.) → passed to EB
+    - Deployment vars (.env.lb) → used locally only
+
+    Args:
+        deployment_env_file: File containing deployment-only vars (default: .env.lb)
+
+    Returns:
+        Dict of environment variables to pass to EB
+
+    Example:
+        # .env
+        DATABASE_URL=postgres://...
+
+        # .env.lb
+        AWS_REGION=us-west-2
+        OIDC_CLIENT_SECRET=...
+
+        # Result: only DATABASE_URL passed to EB
+    """
+    from dotenv import dotenv_values
+    from pathlib import Path
+
+    # Find all .env* files in current directory
+    env_files = sorted(Path.cwd().glob(".env*"))
+    deployment_path = Path.cwd() / deployment_env_file
+
+    # Load deployment vars (to exclude from EB)
+    deployment_vars = set()
+    if deployment_path.exists():
+        deployment_vars = set(dotenv_values(str(deployment_path)).keys())
+        logger.debug(f"Loaded {len(deployment_vars)} deployment vars from {deployment_env_file}")
+
+    # Load all .env* files and merge (except deployment file)
+    app_vars = {}
+    for env_file in env_files:
+        if env_file.resolve() != deployment_path.resolve():
+            file_vars = dotenv_values(str(env_file))
+            logger.debug(f"Loading {len(file_vars)} vars from {env_file.name}")
+            app_vars.update(file_vars)
+
+    # Filter out deployment vars (in case of overlap)
+    filtered_vars = {k: v for k, v in app_vars.items() if k not in deployment_vars}
+
+    if filtered_vars:
+        logger.info(f"Auto-loaded {len(filtered_vars)} app environment variables from .env files")
+
+    return filtered_vars
+
+
 class ClientManager:
     """AWS client manager that handles caching and consistent region usage."""
 

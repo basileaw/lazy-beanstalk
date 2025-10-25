@@ -56,6 +56,13 @@ Central configuration, state management, AWS client caching.
 - OIDC provider creds: `LB_OIDC_CLIENT_ID` → `OIDC_CLIENT_ID` (reusable)
 - ALB-specific: `LB_OIDC_SESSION_TIMEOUT` (no fallback)
 
+**Auto-Loading Pattern**:
+- All `.env*` files loaded and passed to EB
+- EXCEPT `.env.lb` (deployment config only, never passed to EB)
+- Use `--deployment-env` flag to specify alternative exclusion file
+- `load_app_env_vars()` handles filtering logic
+- All `.env*` files excluded from bundle (never uploaded)
+
 ### ship.py
 Deployment orchestration with change detection.
 
@@ -123,6 +130,8 @@ Shared AWS utilities and helpers.
 ### cli.py
 Click CLI wrapper around Python API. Maps CLI options to function kwargs. Loads `.env` via `dotenv.load_dotenv()`.
 
+**Auto-loading**: Calls `load_app_env_vars(deployment_env)` to auto-pass app vars to EB. Default `deployment_env=".env.lb"`.
+
 ## State Management
 
 **File**: `.elasticbeanstalk/config.yml` (YAML, EB CLI compatible)
@@ -170,7 +179,7 @@ See @README.md for user-facing resource docs. Naming conventions:
 
 **HTTPS preservation**: Environment updates would lose HTTPS config. Fixed via `preserve_env_state()` / `restore_env_state()` in ship.py.
 
-**Bundle creation**: Must exclude `.git` explicitly (not in `.gitignore`). Must filter `os.walk()` dirs list in-place to prevent descending into excluded dirs.
+**Bundle creation**: Must exclude `.git` and `.env*` explicitly (not in `.gitignore`). Must filter `os.walk()` dirs list in-place to prevent descending into excluded dirs. `.env*` exclusion ensures secrets never uploaded.
 
 **Circular import**: `secure.py` imports `shield()` for auto-OIDC. Works because import is at module level.
 

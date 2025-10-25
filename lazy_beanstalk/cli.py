@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from . import ship, secure, shield, scrap
-from .config import logger, ConfigurationError, DeploymentError
+from .config import logger, ConfigurationError, DeploymentError, load_app_env_vars
 
 # Load .env file from current directory if it exists
 load_dotenv()
@@ -31,6 +31,7 @@ def cli():
 @click.option("--max-instances", type=int, help="Maximum number of instances (default: 1)")
 @click.option("--policies-dir", help="Path to custom IAM policies directory")
 @click.option("--dockerfile-path", help="Path to Dockerfile (default: ./Dockerfile)")
+@click.option("--deployment-env", default=".env.lb", help="Deployment env file (excluded from EB, default: .env.lb)")
 def ship_cmd(
     app_name,
     environment_name,
@@ -41,9 +42,14 @@ def ship_cmd(
     max_instances,
     policies_dir,
     dockerfile_path,
+    deployment_env,
 ):
     """Deploy application to AWS Elastic Beanstalk."""
     try:
+        # Auto-load app environment variables from .env* files
+        # (excludes deployment vars from .env.lb or --deployment-env file)
+        app_env_vars = load_app_env_vars(deployment_env)
+
         # Build kwargs from provided options
         kwargs = {}
         if app_name:
@@ -64,6 +70,10 @@ def ship_cmd(
             kwargs["policies_dir"] = policies_dir
         if dockerfile_path:
             kwargs["dockerfile_path"] = dockerfile_path
+
+        # Add auto-loaded env vars (if any)
+        if app_env_vars:
+            kwargs["env_vars"] = app_env_vars
 
         result = ship(**kwargs)
 
